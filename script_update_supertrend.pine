@@ -1,0 +1,1717 @@
+//@version=6
+indicator("CE & PE Separated V6 + Fib + BEP + Dashboard  [Best on 5m]", overlay=false, precision=2)
+
+// ═══════════════════════════════════════════════════════════
+// 1. SYMBOL & GAP INPUTS
+// ═══════════════════════════════════════════════════════════
+ce_sym     = input.symbol("NSE:NIFTY260714C24100", title="Call Option (CE)")
+pe_sym     = input.symbol("NSE:NIFTY260714P24100", title="Put Option (PE)")
+gap_offset = input.int(0, title="Visual Gap (Offset)", minval=0, step=50,
+             tooltip="Increase this to push PE lower on the panel")
+
+// ═══════════════════════════════════════════════════════════
+// 2. MASTER VISIBILITY TOGGLES
+// ═══════════════════════════════════════════════════════════
+grp_master   = "Master Visibility"
+show_all_ce  = input.bool(false, title="Show All CE Levels", group=grp_master, inline="master")
+show_all_pe  = input.bool(false, title="Show All PE Levels", group=grp_master, inline="master")
+
+// ═══════════════════════════════════════════════════════════
+// 2A. DASHBOARD SETTINGS
+// ═══════════════════════════════════════════════════════════
+grp_dash       = "Dashboard"
+show_dashboard = input.bool(true,  title="Show Dashboard",         group=grp_dash)
+mobile_mode    = input.bool(false, title="Mobile Mode (Hide Dashboard)", group=grp_dash,
+                 tooltip="When ON, hides the dashboard table completely for mobile-friendly view. All signals and lines still work.")
+dash_pos       = input.string("Bottom Left",
+                 options=["Top Left","Top Right","Bottom Left","Bottom Right"],
+                 title="Dashboard Position", group=grp_dash)
+
+// ═══════════════════════════════════════════════════════════
+// 2B. FIBONACCI / POC SETTINGS
+// ═══════════════════════════════════════════════════════════
+grp_fib     = "POC"
+show_fib    = input.bool(true, title="Show POC Level", group=grp_fib)
+col_fib_poc = input.color(color.yellow, title="POC Color", group=grp_fib, inline="fib_poc")
+wid_fib     = input.int(1, minval=1, maxval=4, title="POC Line Width", group=grp_fib)
+sty_fib     = input.string("Dashed", options=["Solid","Dashed","Dotted"], title="POC Line Style", group=grp_fib)
+
+// ═══════════════════════════════════════════════════════════
+// 2B2. HALF RANGE LEVELS SETTINGS
+// ═══════════════════════════════════════════════════════════
+grp_hr       = "Half Range Levels"
+show_hr      = input.bool(true, title="Show Half Range Lines (last N sessions)", group=grp_hr,
+               tooltip="Half Range = (Common High - Common Low) / 2 of the opening candle.\nCE leg: close > POC => line placed BELOW CE close (support). close < POC => line placed ABOVE CE close (breakout target).\nPE leg: same logic. Draws current session + N past sessions as historical S/R reference.")
+
+col_hr_upper = input.color(color.new(#00FF88, 0), title="CE HR Color", group=grp_hr, inline="hr_upper")
+wid_hr_upper = input.int(2, minval=1, maxval=4,   title="Width",        group=grp_hr, inline="hr_upper")
+sty_hr_upper = input.string("Dashed", options=["Solid","Dashed","Dotted"], title="Style", group=grp_hr, inline="hr_upper")
+col_hr_lower = input.color(color.new(#FF4444, 0), title="PE HR Color", group=grp_hr, inline="hr_lower")
+wid_hr_lower = input.int(2, minval=1, maxval=4,   title="Width",        group=grp_hr, inline="hr_lower")
+sty_hr_lower = input.string("Dashed", options=["Solid","Dashed","Dotted"], title="Style", group=grp_hr, inline="hr_lower")
+
+show_tval    = input.bool(true, title="Show T-Value Lines (5 levels each)", group=grp_hr,
+               tooltip="T-Value = half_range / 2.\nTV1 = HR - TV (support below HR)\nTV2 = HR + TV\nTV3 = HR + HR\nTV4 = HR + HR*1.5\nTV5 = HR + HR*2\nDrawn for both CE and PE HR levels.")
+show_tval_ce = input.bool(true, title="Show CE TV Levels", group=grp_hr)
+show_tval_pe = input.bool(true, title="Show PE TV Levels", group=grp_hr)
+
+show_hist    = input.bool(true,  title="Show Historical Lines", group=grp_hr,
+               tooltip="Draws POC, CE HR, PE HR, and all TV lines for past N sessions as faded reference levels.")
+n_hist       = input.int(3, title="Historical Sessions (N)", group=grp_hr, minval=1, maxval=10)
+col_tval_ce1 = input.color(color.new(#00FFCC, 60), title="CE TV1", group=grp_hr, inline="tval_ce")
+col_tval_ce2 = input.color(color.new(#00FFCC, 40), title="TV2",    group=grp_hr, inline="tval_ce")
+col_tval_ce3 = input.color(color.new(#00FFCC, 20), title="TV3",    group=grp_hr, inline="tval_ce")
+col_tval_ce4 = input.color(color.new(#00FFCC,  0), title="TV4",    group=grp_hr, inline="tval_ce")
+col_tval_ce5 = input.color(color.new(#AAFFEE,  0), title="TV5",    group=grp_hr, inline="tval_ce")
+col_tval_pe1 = input.color(color.new(#FF8888, 60), title="PE TV1", group=grp_hr, inline="tval_pe")
+col_tval_pe2 = input.color(color.new(#FF8888, 40), title="TV2",    group=grp_hr, inline="tval_pe")
+col_tval_pe3 = input.color(color.new(#FF8888, 20), title="TV3",    group=grp_hr, inline="tval_pe")
+col_tval_pe4 = input.color(color.new(#FF8888,  0), title="TV4",    group=grp_hr, inline="tval_pe")
+col_tval_pe5 = input.color(color.new(#FFCCCC,  0), title="TV5",    group=grp_hr, inline="tval_pe")
+
+// ═══════════════════════════════════════════════════════════
+// 2C. BREAKEVEN POINT (BEP) SETTINGS
+// ═══════════════════════════════════════════════════════════
+grp_bep  = "Breakeven Point (BEP)"
+show_bep = input.bool(true, title="Show BEP Line", group=grp_bep,
+           tooltip="BEP = Average of CE and PE previous-day close, plotted as a continuous reference line")
+col_bep  = input.color(color.orange, title="BEP Color", group=grp_bep)
+wid_bep  = input.int(2, minval=1, maxval=4, title="BEP Width", group=grp_bep)
+
+// ═══════════════════════════════════════════════════════════
+// 2C3. STRADDLE SETTINGS
+// ═══════════════════════════════════════════════════════════
+grp_straddle  = "Straddle"
+show_straddle = input.bool(false, title="Show CE+PE Straddle Line", group=grp_straddle,
+                tooltip="Plots the combined CE+PE premium (straddle value).")
+col_straddle  = input.color(color.new(#FFFF00, 0), title="Straddle Color", group=grp_straddle)
+wid_straddle  = input.int(2, minval=1, maxval=4, title="Straddle Width", group=grp_straddle)
+
+straddle_direction = input.string("Short (Credit)", options=["Long (Debit)","Short (Credit)"], title="Straddle Direction", group=grp_straddle,
+                     tooltip="Short (Credit): running profit = % decrease from entry, SL = % increase.\nLong (Debit): running profit = % increase from entry, SL = % decrease.")
+straddle_entry_hh = input.int(9,  title="Entry Hour",   group=grp_straddle, minval=0, maxval=23, inline="entry")
+straddle_entry_mm = input.int(20, title="Entry Minute", group=grp_straddle, minval=0, maxval=59, inline="entry")
+straddle_exit_hh  = input.int(15, title="Exit Hour",    group=grp_straddle, minval=0, maxval=23, inline="exit")
+straddle_exit_mm  = input.int(15, title="Exit Minute",  group=grp_straddle, minval=0, maxval=59, inline="exit")
+show_straddle_sl  = input.bool(true, title="Show Straddle SL Line", group=grp_straddle)
+pct_straddle_sl   = input.float(15.0, title="Straddle SL (%)", group=grp_straddle, minval=0.0, step=1.0)
+col_straddle_sl   = input.color(color.new(color.red, 0), title="Straddle SL Color", group=grp_straddle)
+
+// ═══════════════════════════════════════════════════════════
+// 2C4. LONG STRADDLE SETTINGS
+// ═══════════════════════════════════════════════════════════
+grp_ls       = "Long Straddle"
+ls_entry_hh  = input.int(9,  title="9:30 Entry Hour",   group=grp_ls, minval=0, maxval=23, inline="ls930")
+ls_entry_mm  = input.int(30, title="9:30 Entry Minute", group=grp_ls, minval=0, maxval=59, inline="ls930")
+pct_ls_sl    = input.float(30.0, title="Long Straddle SL (%)", group=grp_ls, minval=0.0, step=1.0,
+               tooltip="SL = entry value (CE+PE premium at entry time) minus this % of entry value")
+
+// ═══════════════════════════════════════════════════════════
+// 2C5. OPTION SELLING STRATEGY SETTINGS
+// ═══════════════════════════════════════════════════════════
+grp_os        = "Option Selling"
+show_os       = input.bool(true, title="Show Option Selling Strategy", group=grp_os)
+os_entry_hh   = input.int(9,  title="Entry Hour",  group=grp_os, minval=0, maxval=23, inline="os_entry")
+os_entry_mm   = input.int(24, title="Min", group=grp_os, minval=0, maxval=59, inline="os_entry")
+os_exit_hh    = input.int(15, title="Exit Hour",   group=grp_os, minval=0, maxval=23, inline="os_exit")
+os_exit_mm    = input.int(0,  title="Exit Minute", group=grp_os, minval=0, maxval=59, inline="os_exit")
+pct_os_target = input.float(30.0, title="Target (%)", group=grp_os, minval=0.0, step=1.0,
+                tooltip="Sell the leg (CE or PE) whose opening candle is bearish and closes below its opening POC.\nEntry is the first confirmed close at or after the configured Entry time.\nTarget = entry premium minus this % (profit booking).\nSL = HR level of that leg.\nForced exit occurs on the first close at or after the configured Exit time.")
+col_os_ce     = input.color(color.new(color.green, 0), title="CE Short Color", group=grp_os)
+col_os_pe     = input.color(color.new(color.red,   0), title="PE Short Color", group=grp_os)
+
+// ═══════════════════════════════════════════════════════════
+// 2D. VWAP SETTINGS
+// ═══════════════════════════════════════════════════════════
+grp_vwap     = "VWAP"
+show_vwap_ce = input.bool(true, title="Show CE VWAP", group=grp_vwap)
+show_vwap_pe = input.bool(true, title="Show PE VWAP", group=grp_vwap)
+col_vwap_ce  = input.color(color.new(#00FFFF, 0), title="CE VWAP Color", group=grp_vwap)
+col_vwap_pe  = input.color(color.new(#FF00FF, 0), title="PE VWAP Color", group=grp_vwap)
+wid_vwap     = input.int(2, minval=1, maxval=4, title="VWAP Width", group=grp_vwap)
+
+// ═══════════════════════════════════════════════════════════
+// 3. CE LINE VISIBILITY & CUSTOMIZATION
+// ═══════════════════════════════════════════════════════════
+grp_ce = "CE Lines"
+
+show_ce_pdh = input.bool(false,                     title="Show CE Prev Day High",       group=grp_ce)
+col_ce_pdh  = input.color(color.new(#008000, 0),    title="  Color",                     group=grp_ce, inline="ce_pdh")
+wid_ce_pdh  = input.int(1, minval=1, maxval=4,      title="  Width",                     group=grp_ce, inline="ce_pdh")
+sty_ce_pdh  = input.string("Solid", options=["Solid","Dashed","Dotted"], title="  Style", group=grp_ce, inline="ce_pdh")
+
+show_ce_pdl = input.bool(false,                     title="Show CE Prev Day Low",        group=grp_ce)
+col_ce_pdl  = input.color(color.new(#008000, 40),   title="  Color",                     group=grp_ce, inline="ce_pdl")
+wid_ce_pdl  = input.int(1, minval=1, maxval=4,      title="  Width",                     group=grp_ce, inline="ce_pdl")
+sty_ce_pdl  = input.string("Solid", options=["Solid","Dashed","Dotted"], title="  Style", group=grp_ce, inline="ce_pdl")
+
+show_ce_och = input.bool(false,                     title="Show CE Opening Candle High", group=grp_ce)
+col_ce_och  = input.color(color.new(#008000, 0),    title="  Color",                     group=grp_ce, inline="ce_och")
+wid_ce_och  = input.int(1, minval=1, maxval=4,      title="  Width",                     group=grp_ce, inline="ce_och")
+sty_ce_och  = input.string("Dotted", options=["Solid","Dashed","Dotted"], title="  Style", group=grp_ce, inline="ce_och")
+
+show_ce_ocl = input.bool(false,                     title="Show CE Opening Candle Low",  group=grp_ce)
+col_ce_ocl  = input.color(color.new(#008000, 0),    title="  Color",                     group=grp_ce, inline="ce_ocl")
+wid_ce_ocl  = input.int(1, minval=1, maxval=4,      title="  Width",                     group=grp_ce, inline="ce_ocl")
+sty_ce_ocl  = input.string("Dotted", options=["Solid","Dashed","Dotted"], title="  Style", group=grp_ce, inline="ce_ocl")
+
+show_ce_ocm = input.bool(false,                     title="Show CE Opening Candle Mid",  group=grp_ce)
+col_ce_ocm  = input.color(color.new(color.aqua,20), title="  Color",                     group=grp_ce, inline="ce_ocm")
+wid_ce_ocm  = input.int(1, minval=1, maxval=4,      title="  Width",                     group=grp_ce, inline="ce_ocm")
+sty_ce_ocm  = input.string("Dashed", options=["Solid","Dashed","Dotted"], title="  Style", group=grp_ce, inline="ce_ocm")
+
+show_ce_t1  = input.bool(false,                     title="Show CE Target 1",            group=grp_ce)
+pct_ce_t1   = input.float(150.0, minval=100.0, maxval=1000.0, step=10.0, title="  %",   group=grp_ce, inline="ce_t1")
+col_ce_t1   = input.color(color.new(#00FF00, 0),    title="  Color",                     group=grp_ce, inline="ce_t1")
+wid_ce_t1   = input.int(1, minval=1, maxval=4,      title="  Width",                     group=grp_ce, inline="ce_t1")
+sty_ce_t1   = input.string("Dashed", options=["Solid","Dashed","Dotted"], title="  Style", group=grp_ce, inline="ce_t1")
+
+show_ce_t2  = input.bool(false,                     title="Show CE Target 2",            group=grp_ce)
+pct_ce_t2   = input.float(200.0, minval=100.0, maxval=1000.0, step=10.0, title="  %",   group=grp_ce, inline="ce_t2")
+col_ce_t2   = input.color(color.new(#00CC00, 0),    title="  Color",                     group=grp_ce, inline="ce_t2")
+wid_ce_t2   = input.int(1, minval=1, maxval=4,      title="  Width",                     group=grp_ce, inline="ce_t2")
+sty_ce_t2   = input.string("Dashed", options=["Solid","Dashed","Dotted"], title="  Style", group=grp_ce, inline="ce_t2")
+
+// ═══════════════════════════════════════════════════════════
+// 4. PE LINE VISIBILITY & CUSTOMIZATION
+// ═══════════════════════════════════════════════════════════
+grp_pe = "PE Lines"
+
+show_pe_pdh = input.bool(false,                        title="Show PE Prev Day High",       group=grp_pe)
+col_pe_pdh  = input.color(color.new(#FF0000, 0),       title="  Color",                     group=grp_pe, inline="pe_pdh")
+wid_pe_pdh  = input.int(1, minval=1, maxval=4,         title="  Width",                     group=grp_pe, inline="pe_pdh")
+sty_pe_pdh  = input.string("Solid", options=["Solid","Dashed","Dotted"], title="  Style",   group=grp_pe, inline="pe_pdh")
+
+show_pe_pdl = input.bool(false,                        title="Show PE Prev Day Low",        group=grp_pe)
+col_pe_pdl  = input.color(color.new(#FF0000, 40),      title="  Color",                     group=grp_pe, inline="pe_pdl")
+wid_pe_pdl  = input.int(1, minval=1, maxval=4,         title="  Width",                     group=grp_pe, inline="pe_pdl")
+sty_pe_pdl  = input.string("Solid", options=["Solid","Dashed","Dotted"], title="  Style",   group=grp_pe, inline="pe_pdl")
+
+show_pe_och = input.bool(false,                        title="Show PE Opening Candle High", group=grp_pe)
+col_pe_och  = input.color(color.new(#FF0000, 0),       title="  Color",                     group=grp_pe, inline="pe_och")
+wid_pe_och  = input.int(1, minval=1, maxval=4,         title="  Width",                     group=grp_pe, inline="pe_och")
+sty_pe_och  = input.string("Dotted", options=["Solid","Dashed","Dotted"], title="  Style",  group=grp_pe, inline="pe_och")
+
+show_pe_ocl = input.bool(false,                        title="Show PE Opening Candle Low",  group=grp_pe)
+col_pe_ocl  = input.color(color.new(#FF0000, 0),       title="  Color",                     group=grp_pe, inline="pe_ocl")
+wid_pe_ocl  = input.int(1, minval=1, maxval=4,         title="  Width",                     group=grp_pe, inline="pe_ocl")
+sty_pe_ocl  = input.string("Dotted", options=["Solid","Dashed","Dotted"], title="  Style",  group=grp_pe, inline="pe_ocl")
+
+show_pe_ocm = input.bool(false,                        title="Show PE Opening Candle Mid",  group=grp_pe)
+col_pe_ocm  = input.color(color.new(color.fuchsia,20), title="  Color",                     group=grp_pe, inline="pe_ocm")
+wid_pe_ocm  = input.int(1, minval=1, maxval=4,         title="  Width",                     group=grp_pe, inline="pe_ocm")
+sty_pe_ocm  = input.string("Dashed", options=["Solid","Dashed","Dotted"], title="  Style",  group=grp_pe, inline="pe_ocm")
+
+show_pe_t1  = input.bool(false,                        title="Show PE Target 1",            group=grp_pe)
+pct_pe_t1   = input.float(150.0, minval=100.0, maxval=1000.0, step=10.0, title="  %",      group=grp_pe, inline="pe_t1")
+col_pe_t1   = input.color(color.new(#FF6600, 0),       title="  Color",                     group=grp_pe, inline="pe_t1")
+wid_pe_t1   = input.int(1, minval=1, maxval=4,         title="  Width",                     group=grp_pe, inline="pe_t1")
+sty_pe_t1   = input.string("Dashed", options=["Solid","Dashed","Dotted"], title="  Style",  group=grp_pe, inline="pe_t1")
+
+show_pe_t2  = input.bool(false,                        title="Show PE Target 2",            group=grp_pe)
+pct_pe_t2   = input.float(200.0, minval=100.0, maxval=1000.0, step=10.0, title="  %",      group=grp_pe, inline="pe_t2")
+col_pe_t2   = input.color(color.new(#CC4400, 0),       title="  Color",                     group=grp_pe, inline="pe_t2")
+wid_pe_t2   = input.int(1, minval=1, maxval=4,         title="  Width",                     group=grp_pe, inline="pe_t2")
+sty_pe_t2   = input.string("Dashed", options=["Solid","Dashed","Dotted"], title="  Style",  group=grp_pe, inline="pe_t2")
+
+// ═══════════════════════════════════════════════════════════
+// 5. HELPERS
+// ═══════════════════════════════════════════════════════════
+f_ls(s) =>
+    s == "Dotted" ? line.style_dotted : s == "Dashed" ? line.style_dashed : line.style_solid
+
+// Use the option close as the signal price. Rounding to arbitrary ₹10 levels
+// creates fills that may never have been tradable.
+
+// All scheduling is based on the bar close in the exchange timezone. A
+// "reached" check works on any intraday timeframe.
+f_close_at_or_after(h, m) =>
+    hour(time_close, "Asia/Kolkata") > h or (hour(time_close, "Asia/Kolkata") == h and minute(time_close, "Asia/Kolkata") >= m)
+
+// ── BUY entry allowed only when the bar CLOSES at/after 09:30 ──
+// Uses bar CLOSE time, so it works on any timeframe:
+//   15m chart: first candle (9:15-9:30) closes 9:30 -> can trigger immediately
+//   5m chart : 9:25-9:30 candle closes 9:30 -> first eligible trigger
+buy_time_ok = f_close_at_or_after(9, 30)
+
+// ═══════════════════════════════════════════════════════════
+// 6. DATA REQUEST
+// ═══════════════════════════════════════════════════════════
+[ce_o, ce_h, ce_l, ce_c] = request.security(ce_sym, timeframe.period, [open, high, low, close])
+[pe_o, pe_h, pe_l, pe_c] = request.security(pe_sym, timeframe.period, [open, high, low, close])
+
+[ce_d_h, ce_d_l, ce_d_c] = request.security(ce_sym, "D", [high[1], low[1], close[1]], lookahead=barmerge.lookahead_on)
+[pe_d_h, pe_d_l, pe_d_c] = request.security(pe_sym, "D", [high[1], low[1], close[1]], lookahead=barmerge.lookahead_on)
+
+ce_vol = request.security(ce_sym, timeframe.period, volume)
+pe_vol = request.security(pe_sym, timeframe.period, volume)
+
+// ═══════════════════════════════════════════════════════════
+// 7. PE ADJUSTED FOR GAP
+// ═══════════════════════════════════════════════════════════
+pe_o_adj = pe_o - gap_offset
+pe_h_adj = pe_h - gap_offset
+pe_l_adj = pe_l - gap_offset
+pe_c_adj = pe_c - gap_offset
+
+// ═══════════════════════════════════════════════════════════
+// 8. SESSION TRACKING
+// ═══════════════════════════════════════════════════════════
+is_new_session = ta.change(time("D")) != 0
+
+var int   session_start_bar  = na
+var int   session_start_time = na
+var float ce_open_high       = na
+var float ce_open_low        = na
+var float ce_open_close      = na
+var float ce_open_open       = na
+var float pe_open_high       = na
+var float pe_open_low        = na
+var float pe_open_close      = na
+var float pe_open_open       = na
+var float fib_low            = na
+var float fib_high           = na
+
+if is_new_session
+    session_start_bar  := bar_index
+    session_start_time := time
+    ce_open_high      := ce_h
+    ce_open_low       := ce_l
+    ce_open_close     := ce_c
+    ce_open_open      := ce_o
+    pe_open_high      := pe_h
+    pe_open_low       := pe_l
+    pe_open_close     := pe_c
+    pe_open_open      := pe_o
+    fib_low           := math.min(ce_l, pe_l)
+    fib_high          := math.max(ce_h, pe_h)
+
+ce_oc_range = ce_open_high - ce_open_low
+ce_oc_mid   = ce_open_low + ce_oc_range * 0.5
+ce_t1_val   = ce_open_low + ce_oc_range * (pct_ce_t1 / 100.0)
+ce_t2_val   = ce_open_low + ce_oc_range * (pct_ce_t2 / 100.0)
+
+pe_oc_range = pe_open_high - pe_open_low
+pe_oc_mid   = pe_open_low + pe_oc_range * 0.5
+pe_t1_val   = pe_open_low + pe_oc_range * (pct_pe_t1 / 100.0)
+pe_t2_val   = pe_open_low + pe_oc_range * (pct_pe_t2 / 100.0)
+
+fib_range = (not na(fib_high) and not na(fib_low)) ? fib_high - fib_low : 0.0
+fib_poc   = (not na(fib_low) and fib_range > 0) ? fib_low + fib_range * 0.5 : na
+
+// ═══════════════════════════════════════════════════════════
+// 8A. HALF RANGE
+// ═══════════════════════════════════════════════════════════
+half_range = fib_range > 0 ? fib_range / 2.0 : na
+
+var float session_half_range = na
+if is_new_session
+    float _fh = math.max(ce_h, pe_h)
+    float _fl = math.min(ce_l, pe_l)
+    session_half_range := (_fh - _fl) / 2.0
+
+var float hr_upper_val    = na
+var float hr_lower_val    = na
+var bool  hr_ce_above_poc = false
+var bool  hr_pe_above_poc = false
+
+var float tval_ce1 = na
+var float tval_ce2 = na
+var float tval_ce3 = na
+var float tval_ce4 = na
+var float tval_ce5 = na
+var float tval_pe1 = na
+var float tval_pe2 = na
+var float tval_pe3 = na
+var float tval_pe4 = na
+var float tval_pe5 = na
+
+var float prev_fib_poc = na
+
+// -- Historical session storage arrays --
+var array<int>   hist_start_bar  = array.new<int>()
+var array<float> hist_poc        = array.new<float>()
+var array<float> hist_hr_ce      = array.new<float>()
+var array<float> hist_hr_pe      = array.new<float>()
+var array<float> hist_tce1       = array.new<float>()
+var array<float> hist_tce2       = array.new<float>()
+var array<float> hist_tce3       = array.new<float>()
+var array<float> hist_tce4       = array.new<float>()
+var array<float> hist_tce5       = array.new<float>()
+var array<float> hist_tpe1       = array.new<float>()
+var array<float> hist_tpe2       = array.new<float>()
+var array<float> hist_tpe3       = array.new<float>()
+var array<float> hist_tpe4       = array.new<float>()
+var array<float> hist_tpe5       = array.new<float>()
+var array<int>   hist_end_bar    = array.new<int>()
+
+if is_new_session
+    if not na(fib_poc) and not na(session_start_bar)
+        prev_fib_poc := fib_poc
+        if array.size(hist_end_bar) > 0
+            array.set(hist_end_bar, array.size(hist_end_bar) - 1, bar_index - 1)
+        array.push(hist_start_bar, session_start_bar)
+        array.push(hist_end_bar,   bar_index - 1)
+        array.push(hist_poc,       fib_poc)
+        array.push(hist_hr_ce,     hr_upper_val)
+        array.push(hist_hr_pe,     hr_lower_val)
+        array.push(hist_tce1,      tval_ce1)
+        array.push(hist_tce2,      tval_ce2)
+        array.push(hist_tce3,      tval_ce3)
+        array.push(hist_tce4,      tval_ce4)
+        array.push(hist_tce5,      tval_ce5)
+        array.push(hist_tpe1,      tval_pe1)
+        array.push(hist_tpe2,      tval_pe2)
+        array.push(hist_tpe3,      tval_pe3)
+        array.push(hist_tpe4,      tval_pe4)
+        array.push(hist_tpe5,      tval_pe5)
+        while array.size(hist_poc) > n_hist
+            array.shift(hist_start_bar)
+            array.shift(hist_end_bar)
+            array.shift(hist_poc)
+            array.shift(hist_hr_ce)
+            array.shift(hist_hr_pe)
+            array.shift(hist_tce1)
+            array.shift(hist_tce2)
+            array.shift(hist_tce3)
+            array.shift(hist_tce4)
+            array.shift(hist_tce5)
+            array.shift(hist_tpe1)
+            array.shift(hist_tpe2)
+            array.shift(hist_tpe3)
+            array.shift(hist_tpe4)
+            array.shift(hist_tpe5)
+
+    hr_upper_val    := na
+    hr_lower_val    := na
+    hr_ce_above_poc := false
+    hr_pe_above_poc := false
+    if not na(half_range) and half_range > 0
+        _poc_ref = not na(prev_fib_poc) ? prev_fib_poc : fib_poc
+        float _ref = not na(_poc_ref) ? _poc_ref : (ce_c + pe_c) / 2.0
+        if ce_c > _ref
+            hr_upper_val    := ce_c - half_range
+            hr_ce_above_poc := true
+        else
+            hr_upper_val    := ce_c + half_range
+            hr_ce_above_poc := false
+        if pe_c > _ref
+            hr_lower_val    := pe_c - half_range
+            hr_pe_above_poc := true
+        else
+            hr_lower_val    := pe_c + half_range
+            hr_pe_above_poc := false
+
+    tval_ce1 := na
+    tval_ce2 := na
+    tval_ce3 := na
+    tval_ce4 := na
+    tval_ce5 := na
+    tval_pe1 := na
+    tval_pe2 := na
+    tval_pe3 := na
+    tval_pe4 := na
+    tval_pe5 := na
+    if not na(hr_upper_val) and not na(half_range)
+        float _tv = half_range / 2.0
+        tval_ce1 := hr_upper_val - _tv
+        tval_ce2 := hr_upper_val + _tv
+        tval_ce3 := hr_upper_val + half_range
+        tval_ce4 := hr_upper_val + half_range * 1.5
+        tval_ce5 := hr_upper_val + half_range * 2.0
+    if not na(hr_lower_val) and not na(half_range)
+        float _tv = half_range / 2.0
+        tval_pe1 := hr_lower_val - _tv
+        tval_pe2 := hr_lower_val + _tv
+        tval_pe3 := hr_lower_val + half_range
+        tval_pe4 := hr_lower_val + half_range * 1.5
+        tval_pe5 := hr_lower_val + half_range * 2.0
+
+// ═══════════════════════════════════════════════════════════
+// 8B. BEP
+// ═══════════════════════════════════════════════════════════
+bep = (ce_d_c + pe_d_c) / 2.0
+
+// ═══════════════════════════════════════════════════════════
+// 8B2. STRADDLE
+// ═══════════════════════════════════════════════════════════
+straddle_close = ce_c + pe_c
+
+var float straddle_entry     = na
+var int   straddle_entry_bar = na
+if is_new_session
+    straddle_entry     := na
+    straddle_entry_bar := na
+
+straddle_is_entry_time = f_close_at_or_after(straddle_entry_hh, straddle_entry_mm)
+if straddle_is_entry_time and na(straddle_entry)
+    straddle_entry     := straddle_close
+    straddle_entry_bar := bar_index
+
+straddle_pnl_pct = not na(straddle_entry) and straddle_entry != 0 ?
+     (straddle_direction == "Short (Credit)" ?
+         (straddle_entry - straddle_close) / straddle_entry * 100.0 :
+         (straddle_close - straddle_entry) / straddle_entry * 100.0) : na
+
+float straddle_sl_val = na
+if not na(straddle_entry)
+    straddle_sl_val := straddle_direction == "Short (Credit)" ?
+         straddle_entry * (1 + pct_straddle_sl / 100.0) :
+         straddle_entry * (1 - pct_straddle_sl / 100.0)
+
+straddle_sl_cross = not na(straddle_sl_val) and (straddle_direction == "Short (Credit)" ? ta.crossover(straddle_close, straddle_sl_val) : ta.crossunder(straddle_close, straddle_sl_val))
+straddle_sl_hit   = show_straddle and straddle_sl_cross
+straddle_is_exit_time = f_close_at_or_after(straddle_exit_hh, straddle_exit_mm)
+
+// ═══════════════════════════════════════════════════════════
+// 8B3. LONG STRADDLE @ 9:30
+// ═══════════════════════════════════════════════════════════
+ls_is_930 = f_close_at_or_after(ls_entry_hh, ls_entry_mm)
+
+var float ls930_ce_entry = na
+var float ls930_pe_entry = na
+var float ls930_entry    = na
+var float ls930_sl       = na
+if is_new_session
+    ls930_ce_entry := na
+    ls930_pe_entry := na
+    ls930_entry    := na
+    ls930_sl       := na
+
+if ls_is_930 and na(ls930_entry)
+    ls930_ce_entry := ce_c
+    ls930_pe_entry := pe_c
+    ls930_entry    := ce_c + pe_c
+    ls930_sl       := ls930_entry * (1 - pct_ls_sl / 100.0)
+
+ls930_pnl_pct     = not na(ls930_entry) and ls930_entry != 0 ? (straddle_close - ls930_entry) / ls930_entry * 100.0 : na
+ls930_cross_under = ta.crossunder(straddle_close, nz(ls930_sl, 0.0))
+ls930_sl_hit      = not na(ls930_sl) and ls930_cross_under
+
+// ═══════════════════════════════════════════════════════════
+// 8C. VWAP
+// ═══════════════════════════════════════════════════════════
+var float ce_cum_tpv = 0.0
+var float ce_cum_vol = 0.0
+if is_new_session
+    ce_cum_tpv := 0.0
+    ce_cum_vol := 0.0
+ce_tp       = (ce_h + ce_l + ce_c) / 3.0
+ce_cum_tpv := ce_cum_tpv + ce_tp * nz(ce_vol)
+ce_cum_vol := ce_cum_vol + nz(ce_vol)
+ce_vwap     = ce_cum_vol > 0 ? ce_cum_tpv / ce_cum_vol : na
+
+var float pe_cum_tpv = 0.0
+var float pe_cum_vol = 0.0
+if is_new_session
+    pe_cum_tpv := 0.0
+    pe_cum_vol := 0.0
+pe_tp       = (pe_h + pe_l + pe_c) / 3.0
+pe_cum_tpv := pe_cum_tpv + pe_tp * nz(pe_vol)
+pe_cum_vol := pe_cum_vol + nz(pe_vol)
+pe_vwap     = pe_cum_vol > 0 ? pe_cum_tpv / pe_cum_vol : na
+pe_vwap_adj = pe_vwap - gap_offset
+
+// ═══════════════════════════════════════════════════════════
+// 8C2. OPTION SELLING STRATEGY
+// ═══════════════════════════════════════════════════════════
+os_is_exit_time = f_close_at_or_after(os_exit_hh, os_exit_mm)
+
+var bool  os_ce_active = false
+var bool  os_pe_active = false
+var float os_ce_entry  = na
+var float os_pe_entry  = na
+var float os_ce_target = na
+var float os_pe_target = na
+var float os_ce_sl     = na
+var float os_pe_sl     = na
+var int   os_ce_entry_bar = na
+var int   os_pe_entry_bar = na
+
+// -- Snapshot HR levels at the time of sell entry so they don't change --
+var float os_ce_hr_snap = na
+var float os_pe_hr_snap = na
+// -- Snapshot TV1 levels at sell entry time --
+var float os_ce_tv1_snap = na
+var float os_pe_tv1_snap = na
+
+if is_new_session
+    os_ce_active   := false
+    os_pe_active   := false
+    os_ce_entry    := na
+    os_pe_entry    := na
+    os_ce_target   := na
+    os_pe_target   := na
+    os_ce_sl       := na
+    os_pe_sl       := na
+    os_ce_entry_bar := na
+    os_pe_entry_bar := na
+    os_ce_hr_snap  := na
+    os_pe_hr_snap  := na
+    os_ce_tv1_snap := na
+    os_pe_tv1_snap := na
+
+signal_time_ok = f_close_at_or_after(os_entry_hh, os_entry_mm)
+
+// -- Sell condition: opening candle close < open and below the opening POC. --
+// -- Entry is the first confirmed bar close at/after the configured time. --
+os_ce_sell_armed = not na(ce_open_close) and not na(ce_open_open) and not na(fib_poc) and ce_open_close < ce_open_open and ce_open_close < fib_poc
+os_pe_sell_armed = not na(pe_open_close) and not na(pe_open_open) and not na(fib_poc) and pe_open_close < pe_open_open and pe_open_close < fib_poc
+
+os_ce_entry_trigger = barstate.isconfirmed and show_os and signal_time_ok and na(os_ce_entry) and os_ce_sell_armed
+if os_ce_entry_trigger
+    os_ce_active   := true
+    os_ce_entry    := ce_c
+    os_ce_target   := ce_c * (1 - pct_os_target / 100.0)
+    os_ce_sl       := hr_upper_val   // CE SL = CE HR level
+    os_ce_hr_snap  := hr_upper_val   // snapshot CE HR at entry
+    os_ce_tv1_snap := tval_ce1       // snapshot CE TV1 at entry (below CE HR)
+    os_ce_entry_bar := bar_index
+
+os_pe_entry_trigger = barstate.isconfirmed and show_os and signal_time_ok and na(os_pe_entry) and os_pe_sell_armed
+if os_pe_entry_trigger
+    os_pe_active   := true
+    os_pe_entry    := pe_c
+    os_pe_target   := pe_c * (1 - pct_os_target / 100.0)
+    os_pe_sl       := hr_lower_val   // PE SL = PE HR level
+    os_pe_hr_snap  := hr_lower_val   // snapshot PE HR at entry
+    os_pe_tv1_snap := tval_pe1       // snapshot PE TV1 at entry (below PE HR)
+    os_pe_entry_bar := bar_index
+
+// -- CE Short exit conditions --
+// The short opens at the entry bar close. If a later bar touches both target
+// and stop, count the stop because OHLC data cannot establish target first.
+os_ce_can_exit    = os_ce_active and not na(os_ce_entry_bar) and bar_index > os_ce_entry_bar
+os_ce_sl_hit      = os_ce_can_exit and not na(os_ce_sl) and ce_h >= os_ce_sl
+os_ce_target_hit  = os_ce_can_exit and not os_ce_sl_hit and not na(os_ce_target) and ce_l <= os_ce_target
+os_ce_time_exit   = os_ce_can_exit and os_is_exit_time
+os_ce_exit        = os_ce_target_hit or os_ce_sl_hit or os_ce_time_exit
+os_ce_exit_reason = os_ce_sl_hit ? "SL(HR)" : os_ce_target_hit ? "Target" : os_ce_time_exit ? "Time" : ""
+
+float os_ce_entry_snap  = os_ce_entry
+float os_ce_target_snap = os_ce_target
+float os_ce_sl_snap     = os_ce_sl
+
+var string os_ce_exit_reason_persist = ""
+if is_new_session
+    os_ce_exit_reason_persist := ""
+if os_ce_exit
+    os_ce_active := false
+    os_ce_exit_reason_persist := os_ce_exit_reason
+
+// -- PE Short exit conditions --
+os_pe_can_exit    = os_pe_active and not na(os_pe_entry_bar) and bar_index > os_pe_entry_bar
+os_pe_sl_hit      = os_pe_can_exit and not na(os_pe_sl) and pe_h >= os_pe_sl
+os_pe_target_hit  = os_pe_can_exit and not os_pe_sl_hit and not na(os_pe_target) and pe_l <= os_pe_target
+os_pe_time_exit   = os_pe_can_exit and os_is_exit_time
+os_pe_exit        = os_pe_target_hit or os_pe_sl_hit or os_pe_time_exit
+os_pe_exit_reason = os_pe_sl_hit ? "SL(HR)" : os_pe_target_hit ? "Target" : os_pe_time_exit ? "Time" : ""
+
+float os_pe_entry_snap  = os_pe_entry
+float os_pe_target_snap = os_pe_target
+float os_pe_sl_snap     = os_pe_sl
+
+var string os_pe_exit_reason_persist = ""
+if is_new_session
+    os_pe_exit_reason_persist := ""
+if os_pe_exit
+    os_pe_active := false
+    os_pe_exit_reason_persist := os_pe_exit_reason
+
+// ═══════════════════════════════════════════════════════════
+// 8C3. ADJUSTMENT SIGNAL (CORRECTED LOGIC)
+// ─────────────────────────────────────────────────────────
+// SELL PE active scenario:
+//   Entry  : SELL PE at pe_entry with SL = PE HR level (hr_lower_val)
+//   Levels : PE HR = hr_lower_val  (snapped at entry as os_pe_hr_snap)
+//             PE TV1 = pe_tv1_snap = PE HR - (HR/2)   [BELOW PE HR]
+//   Trigger: PE price rises AGAINST sell --> pe_h touches PE TV1 level
+//             (PE TV1 is ABOVE PE HR since we SOLD, market moving up
+//              means CE is cheaper -- BUY CE as hedge)
+//
+//   Wait -- TV1 formula: tval_pe1 = hr_lower_val - TV = hr_lower_val - HR/2
+//   That is BELOW PE HR. When we SELL PE the risk is price going UP.
+//   If PE price rises to PE HR that is our SL.
+//   The adjustment trigger should be BEFORE the SL is hit:
+//   i.e., when PE price rises from entry toward PE HR and crosses PE HR
+//   the SL exits. Adjustment at PE TV1 means PE has risen to PE HR - TV
+//   i.e., ABOVE entry (since entry is below PE HR for a short).
+//   Correction: TV1 = PE_HR - TV is still BELOW PE HR.
+//   If selling PE, entry < PE HR (entry is the 9:19 close which < POC < PE HR).
+//   Adjustment at TV1 means price has risen from entry up to PE_HR - TV.
+//   This is a valid mid-way alert before the SL at PE HR.
+//
+// So the CORRECT logic for adjustment is:
+//   ADJ for SELL PE: fire when pe_h >= os_pe_tv1_snap  (price rising toward SL)
+//                    => BUY 1 lot CE to hedge, SL = PE HR (os_pe_hr_snap)
+//   ADJ for SELL CE: fire when ce_h >= os_ce_tv1_snap  (price rising toward SL)
+//                    => BUY 1 lot PE to hedge, SL = CE HR (os_ce_hr_snap)
+//
+// KEY FIX: use snapshotted HR and TV1 values from entry time.
+//          Fire ONLY while the sell position is still active (not after SL/Target exit).
+//          Fire only ONCE per session per leg.
+// ═══════════════════════════════════════════════════════════
+
+var bool  adj_ce_fired  = false   // CE hedge fired (when SELL PE active and PE rises to TV1)
+var bool  adj_pe_fired  = false   // PE hedge fired (when SELL CE active and CE rises to TV1)
+var float adj_ce_entry  = na
+var float adj_pe_entry  = na
+var float adj_ce_sl     = na      // SL for the BUY CE hedge = PE HR
+var float adj_pe_sl     = na      // SL for the BUY PE hedge = CE HR
+
+if is_new_session
+    adj_ce_fired := false
+    adj_pe_fired := false
+    adj_ce_entry := na
+    adj_pe_entry := na
+    adj_ce_sl    := na
+    adj_pe_sl    := na
+
+// ADJ CE: SELL PE is active AND PE price rises up to PE TV1 level (snapped at entry)
+// os_pe_tv1_snap = pe_hr_snap - (HR/2) which is between entry and PE HR
+// This fires ONLY while os_pe_active is true (position still open, SL not yet hit)
+adj_ce_trigger = barstate.isconfirmed and os_pe_active and not na(os_pe_entry_bar) and bar_index > os_pe_entry_bar and not adj_ce_fired and not na(os_pe_tv1_snap) and pe_h >= os_pe_tv1_snap
+if adj_ce_trigger
+    adj_ce_fired := true
+    adj_ce_entry := ce_c
+    adj_ce_sl    := os_pe_hr_snap   // hedge SL = PE HR level (where PE sell SL is)
+
+// ADJ PE: SELL CE is active AND CE price rises up to CE TV1 level (snapped at entry)
+// os_ce_tv1_snap = ce_hr_snap - (HR/2) which is between entry and CE HR
+// This fires ONLY while os_ce_active is true (position still open, SL not yet hit)
+adj_pe_trigger = barstate.isconfirmed and os_ce_active and not na(os_ce_entry_bar) and bar_index > os_ce_entry_bar and not adj_pe_fired and not na(os_ce_tv1_snap) and ce_h >= os_ce_tv1_snap
+if adj_pe_trigger
+    adj_pe_fired := true
+    adj_pe_entry := pe_c
+    adj_pe_sl    := os_ce_hr_snap   // hedge SL = CE HR level (where CE sell SL is)
+
+// ═══════════════════════════════════════════════════════════
+// 8D. TRADE SETTINGS + ALERT FILTER
+// ═══════════════════════════════════════════════════════════
+grp_trade       = "Trade Signals"
+show_trade      = input.bool(true, title="Show Trade Signals", group=grp_trade)
+enable_alerts   = input.bool(true, title="Enable Alerts",      group=grp_trade)
+one_buy_trade_per_leg_per_day = input.bool(true, title="Limit to One CE/PE Buy Trade Per Day", group=grp_trade,
+                              tooltip="ON: each leg can enter only once per session. OFF: a leg may re-enter after its prior trade exits, subject to all other filters and the forced-exit time.")
+alert_freq_once = input.bool(true, title="Alert Once Per Bar (uncheck = every tick)", group=grp_trade,
+                  tooltip="ON: alert fires once when the bar closes. OFF: fires on every realtime tick.")
+
+// -- Alert type filter for webhook --
+grp_alert_filter = "Alert Filter (Webhook)"
+alert_mode = input.string("Both Buy and Sell",
+             options=["Buy Trades Only", "Sell Trades Only", "Both Buy and Sell"],
+             title="Send Alerts For", group=grp_alert_filter,
+             tooltip="Buy Trades Only  : CE/PE long buy entries and exits only.\nSell Trades Only : CE/PE short sell entries, exits, and adjustments only.\nBoth Buy and Sell: all trade alerts.")
+
+force_exit_hh   = input.int(15, title="Force Exit Hour",   group=grp_trade, minval=0, maxval=23, inline="texit")
+force_exit_mm   = input.int(15, title="Force Exit Minute", group=grp_trade, minval=0, maxval=59, inline="texit",
+                  tooltip="Any open CE/PE Buy trade is force-closed at this time.")
+
+_alert_freq = alert_freq_once ? alert.freq_once_per_bar : alert.freq_all
+
+// -- Alert gate helpers --
+_allow_buy  = alert_mode == "Buy Trades Only"  or alert_mode == "Both Buy and Sell"
+_allow_sell = alert_mode == "Sell Trades Only" or alert_mode == "Both Buy and Sell"
+
+// ═══════════════════════════════════════════════════════════
+// 8E. SPOT DATA + SPOT ORB
+// ═══════════════════════════════════════════════════════════
+spot_sym   = input.symbol("NSE:NIFTY", title="Spot Symbol", group=grp_trade)
+
+// Optional spot-market filters for CE/PE buying. They are OFF by default so
+// existing signal behaviour is preserved until explicitly enabled.
+grp_spot_filter          = "Spot Trend Filters"
+use_spot_supertrend      = input.bool(false, title="Use Spot Supertrend Filter", group=grp_spot_filter)
+spot_st_atr_length       = input.int(10, title="Supertrend ATR Length", minval=1, group=grp_spot_filter, inline="st")
+spot_st_factor           = input.float(2.0, title="Factor", minval=0.1, step=0.1, group=grp_spot_filter, inline="st")
+use_spot_vwap_direction  = input.bool(false, title="Use Spot VWAP Direction Filter", group=grp_spot_filter)
+spot_vwap_slope_bars     = input.int(1, title="VWAP Slope Lookback Bars", minval=1, group=grp_spot_filter,
+                            tooltip="CE needs spot above a rising VWAP; PE needs spot below a falling VWAP.")
+
+spot_close = request.security(spot_sym, timeframe.period, close)
+spot_high  = request.security(spot_sym, timeframe.period, high)
+spot_low   = request.security(spot_sym, timeframe.period, low)
+spot_vol   = request.security(spot_sym, timeframe.period, volume)
+[spot_supertrend, spot_supertrend_dir] = request.security(spot_sym, timeframe.period, ta.supertrend(spot_st_factor, spot_st_atr_length))
+
+var float spot_orb_high = na
+var float spot_orb_low  = na
+if is_new_session
+    spot_orb_high := spot_high
+    spot_orb_low  := spot_low
+
+spot_oc_mid = (not na(spot_orb_high) and not na(spot_orb_low)) ? (spot_orb_high + spot_orb_low) / 2.0 : na
+
+var float spot_cum_tpv = 0.0
+var float spot_cum_vol = 0.0
+if is_new_session
+    spot_cum_tpv := 0.0
+    spot_cum_vol := 0.0
+spot_tp       = (spot_high + spot_low + spot_close) / 3.0
+spot_cum_tpv := spot_cum_tpv + spot_tp * nz(spot_vol)
+spot_cum_vol := spot_cum_vol + nz(spot_vol)
+spot_vwap     = spot_cum_vol > 0 ? spot_cum_tpv / spot_cum_vol : na
+
+// ta.supertrend() returns a negative direction for an uptrend and a positive
+// direction for a downtrend. Calculate it in request.security so its ATR uses
+// NIFTY spot OHLC, never the chart or option OHLC.
+spot_st_bull = not na(spot_supertrend) and spot_supertrend_dir < 0
+spot_st_bear = not na(spot_supertrend) and spot_supertrend_dir > 0
+spot_vwap_up = not na(spot_vwap) and not na(spot_vwap[spot_vwap_slope_bars]) and spot_close > spot_vwap and spot_vwap > spot_vwap[spot_vwap_slope_bars]
+spot_vwap_down = not na(spot_vwap) and not na(spot_vwap[spot_vwap_slope_bars]) and spot_close < spot_vwap and spot_vwap < spot_vwap[spot_vwap_slope_bars]
+
+spot_ce_trend_ok = (not use_spot_supertrend or spot_st_bull) and (not use_spot_vwap_direction or spot_vwap_up)
+spot_pe_trend_ok = (not use_spot_supertrend or spot_st_bear) and (not use_spot_vwap_direction or spot_vwap_down)
+
+// ═══════════════════════════════════════════════════════════
+// 8F. SIGNAL LOGIC (BUY side)
+// ═══════════════════════════════════════════════════════════
+ce_base_long = not na(ce_c) and ce_c > 0 and not na(ce_vwap) and not na(hr_lower_val) and ce_c > ce_vwap and ce_c > hr_lower_val
+pe_base_long = not na(pe_c) and pe_c > 0 and not na(pe_vwap) and not na(hr_upper_val) and pe_c > pe_vwap and pe_c > hr_upper_val
+long_ce = ce_base_long and spot_ce_trend_ok
+long_pe = pe_base_long and spot_pe_trend_ok
+
+// ═══════════════════════════════════════════════════════════
+// 8G. TRADE STATE TRACKING (BUY side)
+// ═══════════════════════════════════════════════════════════
+var bool  in_ce_trade     = false
+var float ce_entry_prem   = na
+var float ce_target1_prem = na
+var float ce_target2_prem = na
+var bool  ce_t1_done      = false
+var float ce_sl_prem_lvl  = na
+var bool  ce_trade_done   = false
+var int   ce_entry_bar    = na
+
+var bool  in_pe_trade     = false
+var float pe_entry_prem   = na
+var float pe_target1_prem = na
+var float pe_target2_prem = na
+var bool  pe_t1_done      = false
+var float pe_sl_prem_lvl  = na
+var bool  pe_trade_done   = false
+var int   pe_entry_bar    = na
+
+if is_new_session
+    ce_trade_done   := false
+    pe_trade_done   := false
+    in_ce_trade     := false
+    ce_entry_prem   := na
+    ce_target1_prem := na
+    ce_target2_prem := na
+    ce_t1_done      := false
+    ce_sl_prem_lvl  := na
+    ce_entry_bar    := na
+    in_pe_trade     := false
+    pe_entry_prem   := na
+    pe_target1_prem := na
+    pe_target2_prem := na
+    pe_t1_done      := false
+    pe_sl_prem_lvl  := na
+    pe_entry_bar    := na
+
+trade_is_force_exit_time = f_close_at_or_after(force_exit_hh, force_exit_mm)
+buy_entry_time_ok = buy_time_ok and not trade_is_force_exit_time
+
+var float ce_hr_at_entry = na
+if is_new_session
+    ce_hr_at_entry := na
+
+var float ce_entry_snap  = na
+var float ce_t1_snap     = na
+var float ce_t2_snap     = na
+var float ce_sl_snap     = na
+var float ce_hr_snap     = na
+if is_new_session
+    ce_entry_snap := na
+    ce_t1_snap    := na
+    ce_t2_snap    := na
+    ce_sl_snap    := na
+    ce_hr_snap    := na
+
+// Block BUY CE if SELL CE is already active (cannot be long and short same leg)
+// NEW: buy_time_ok = bar must CLOSE at/after 9:30 (first eligible trigger 9:30)
+ce_signal_trigger = barstate.isconfirmed and long_ce and not in_ce_trade and (not one_buy_trade_per_leg_per_day or not ce_trade_done) and buy_entry_time_ok and not na(session_half_range) and not na(ce_c) and ce_c > 0 and not os_ce_active
+if ce_signal_trigger
+    in_ce_trade     := true
+    ce_trade_done   := true
+    ce_entry_prem   := ce_c
+    ce_hr_at_entry  := session_half_range
+    ce_target1_prem := ce_c + session_half_range / 2.0
+    ce_target2_prem := ce_c + session_half_range
+    ce_t1_done      := false
+    ce_sl_prem_lvl  := ce_c - session_half_range
+    ce_entry_snap   := ce_c
+    ce_t1_snap      := ce_c + session_half_range / 2.0
+    ce_t2_snap      := ce_c + session_half_range
+    ce_sl_snap      := ce_c - session_half_range
+    ce_hr_snap      := session_half_range
+    ce_entry_bar    := bar_index
+
+ce_can_exit = in_ce_trade and not na(ce_entry_bar) and bar_index > ce_entry_bar
+ce_sl_hit    = barstate.isconfirmed and ce_can_exit and not na(ce_sl_prem_lvl) and ce_l <= ce_sl_prem_lvl
+ce_t1_hit = ce_can_exit and not ce_sl_hit and not ce_t1_done and not na(ce_target1_prem) and ce_h >= ce_target1_prem
+if ce_t1_hit
+    ce_t1_done := true
+
+ce_t2_hit    = ce_can_exit and not ce_sl_hit and not na(ce_target2_prem) and ce_h >= ce_target2_prem
+ce_time_exit = ce_can_exit and trade_is_force_exit_time
+ce_exit      = ce_t2_hit or ce_sl_hit or ce_time_exit
+
+ce_exit_entry_prem = ce_entry_prem
+ce_exit_sl_prem    = ce_sl_prem_lvl
+ce_exit_t1_prem    = ce_target1_prem
+ce_exit_t2_prem    = ce_target2_prem
+
+if ce_exit
+    in_ce_trade     := false
+    ce_entry_prem   := na
+    ce_target1_prem := na
+    ce_target2_prem := na
+    ce_t1_done      := false
+    ce_sl_prem_lvl  := na
+    ce_hr_at_entry  := na
+    ce_entry_bar    := na
+
+var float pe_hr_at_entry = na
+if is_new_session
+    pe_hr_at_entry := na
+
+var float pe_entry_snap  = na
+var float pe_t1_snap     = na
+var float pe_t2_snap     = na
+var float pe_sl_snap     = na
+var float pe_hr_snap     = na
+if is_new_session
+    pe_entry_snap := na
+    pe_t1_snap    := na
+    pe_t2_snap    := na
+    pe_sl_snap    := na
+    pe_hr_snap    := na
+
+// Block BUY PE if SELL PE is already active (cannot be long and short same leg)
+// NEW: buy_time_ok = bar must CLOSE at/after 9:30 (first eligible trigger 9:30)
+pe_signal_trigger = barstate.isconfirmed and long_pe and not in_pe_trade and (not one_buy_trade_per_leg_per_day or not pe_trade_done) and buy_entry_time_ok and not na(session_half_range) and not na(pe_c) and pe_c > 0 and not os_pe_active
+if pe_signal_trigger
+    in_pe_trade     := true
+    pe_trade_done   := true
+    pe_entry_prem   := pe_c
+    pe_hr_at_entry  := session_half_range
+    pe_target1_prem := pe_c + session_half_range / 2.0
+    pe_target2_prem := pe_c + session_half_range
+    pe_t1_done      := false
+    pe_sl_prem_lvl  := pe_c - session_half_range
+    pe_entry_snap   := pe_c
+    pe_t1_snap      := pe_c + session_half_range / 2.0
+    pe_t2_snap      := pe_c + session_half_range
+    pe_sl_snap      := pe_c - session_half_range
+    pe_hr_snap      := session_half_range
+    pe_entry_bar    := bar_index
+
+pe_can_exit = in_pe_trade and not na(pe_entry_bar) and bar_index > pe_entry_bar
+pe_sl_hit    = barstate.isconfirmed and pe_can_exit and not na(pe_sl_prem_lvl) and pe_l <= pe_sl_prem_lvl
+pe_t1_hit = pe_can_exit and not pe_sl_hit and not pe_t1_done and not na(pe_target1_prem) and pe_h >= pe_target1_prem
+if pe_t1_hit
+    pe_t1_done := true
+
+pe_t2_hit    = pe_can_exit and not pe_sl_hit and not na(pe_target2_prem) and pe_h >= pe_target2_prem
+pe_time_exit = pe_can_exit and trade_is_force_exit_time
+pe_exit      = pe_t2_hit or pe_sl_hit or pe_time_exit
+
+pe_exit_entry_prem = pe_entry_prem
+pe_exit_sl_prem    = pe_sl_prem_lvl
+pe_exit_t1_prem    = pe_target1_prem
+pe_exit_t2_prem    = pe_target2_prem
+
+if pe_exit
+    in_pe_trade     := false
+    pe_entry_prem   := na
+    pe_target1_prem := na
+    pe_target2_prem := na
+    pe_t1_done      := false
+    pe_sl_prem_lvl  := na
+    pe_entry_bar    := na
+
+// ═══════════════════════════════════════════════════════════
+// 8H. ENTRY / EXIT LABELS
+// ═══════════════════════════════════════════════════════════
+if show_trade
+    if ce_signal_trigger
+        label.new(bar_index, ce_l,
+             "BUY CE\nPrem:" + str.tostring(ce_entry_snap, "#.0") +
+             "\nT1:" + str.tostring(ce_t1_snap, "#.0") +
+             "\nT2:" + str.tostring(ce_t2_snap, "#.0") +
+             "\nSL:" + str.tostring(ce_sl_snap, "#.0") +
+             "\nHR:" + str.tostring(ce_hr_snap, "#.0") + "pts",
+             style=label.style_label_up, color=color.new(color.green, 0),
+             textcolor=color.white, size=size.small)
+
+    if ce_t1_hit
+        label.new(bar_index, ce_h,
+             "CE T1 HIT\nPrem:" + str.tostring(ce_h, "#.0"),
+             style=label.style_label_down, color=color.new(#66FF66, 0),
+             textcolor=color.black, size=size.small)
+
+    if ce_t2_hit
+        label.new(bar_index, ce_h,
+             "CE T2 HIT\nPrem:" + str.tostring(ce_h, "#.0"),
+             style=label.style_label_down, color=color.new(color.lime, 0),
+             textcolor=color.black, size=size.small)
+
+    if ce_sl_hit
+        label.new(bar_index, ce_c,
+             "CE SL HIT\nPrem:" + str.tostring(ce_c, "#.0") + " SL:" + str.tostring(ce_exit_sl_prem, "#.0"),
+             style=label.style_label_down, color=color.new(color.red, 0),
+             textcolor=color.white, size=size.small)
+
+    if ce_time_exit
+        label.new(bar_index, ce_c,
+             "CE TIME EXIT\nPrem:" + str.tostring(ce_c, "#.0") + " Entry:" + str.tostring(ce_exit_entry_prem, "#.0"),
+             style=label.style_label_down, color=color.new(color.gray, 0),
+             textcolor=color.white, size=size.small)
+
+    if pe_signal_trigger
+        label.new(bar_index, pe_l_adj,
+             "BUY PE\nPrem:" + str.tostring(pe_entry_snap, "#.0") +
+             "\nT1:" + str.tostring(pe_t1_snap, "#.0") +
+             "\nT2:" + str.tostring(pe_t2_snap, "#.0") +
+             "\nSL:" + str.tostring(pe_sl_snap, "#.0") +
+             "\nHR:" + str.tostring(pe_hr_snap, "#.0") + "pts",
+             style=label.style_label_up, color=color.new(color.red, 0),
+             textcolor=color.white, size=size.small)
+
+    if pe_t1_hit
+        label.new(bar_index, pe_h_adj,
+             "PE T1 HIT\nPrem:" + str.tostring(pe_h, "#.0"),
+             style=label.style_label_down, color=color.new(#FFAA66, 0),
+             textcolor=color.black, size=size.small)
+
+    if pe_t2_hit
+        label.new(bar_index, pe_h_adj,
+             "PE T2 HIT\nPrem:" + str.tostring(pe_h, "#.0"),
+             style=label.style_label_down, color=color.new(color.orange, 0),
+             textcolor=color.black, size=size.small)
+
+    if pe_sl_hit
+        label.new(bar_index, pe_c_adj,
+             "PE SL HIT\nPrem:" + str.tostring(pe_c, "#.0") + " SL:" + str.tostring(pe_exit_sl_prem, "#.0"),
+             style=label.style_label_down, color=color.new(color.maroon, 0),
+             textcolor=color.white, size=size.small)
+
+    if pe_time_exit
+        label.new(bar_index, pe_c_adj,
+             "PE TIME EXIT\nPrem:" + str.tostring(pe_c, "#.0") + " Entry:" + str.tostring(pe_exit_entry_prem, "#.0"),
+             style=label.style_label_down, color=color.new(color.gray, 0),
+             textcolor=color.white, size=size.small)
+
+    if straddle_sl_hit
+        label.new(bar_index, straddle_close,
+             "STRADDLE SL\nVal:" + str.tostring(straddle_close, "#.0") + " | P&L:" + str.tostring(straddle_pnl_pct, "#.0") + "%",
+             style=label.style_label_down, color=col_straddle_sl,
+             textcolor=color.white, size=size.small)
+
+    if show_os and os_ce_entry_trigger
+        label.new(bar_index, ce_c,
+             "SELL CE\nPrem:" + str.tostring(os_ce_entry_snap, "#.0") +
+             "\nTgt:" + str.tostring(os_ce_target_snap, "#.0") +
+             "\nSL(CE HR):" + str.tostring(os_ce_sl_snap, "#.0") +
+             "\nADJ at TV1:" + str.tostring(os_ce_tv1_snap, "#.0"),
+             style=label.style_label_down, color=col_os_ce,
+             textcolor=color.white, size=size.small)
+
+    if show_os and os_ce_exit
+        label.new(bar_index, ce_c,
+             "CE SHORT EXIT (" + os_ce_exit_reason + ")\nPrem:" + str.tostring(ce_c, "#.0") + " Entry:" + str.tostring(os_ce_entry_snap, "#.0"),
+             style=label.style_label_up, color=os_ce_target_hit ? color.new(color.lime, 0) : os_ce_sl_hit ? color.new(color.red, 0) : color.new(color.gray, 0),
+             textcolor=color.black, size=size.small)
+
+    if show_os and os_pe_entry_trigger
+        label.new(bar_index, pe_c_adj,
+             "SELL PE\nPrem:" + str.tostring(os_pe_entry_snap, "#.0") +
+             "\nTgt:" + str.tostring(os_pe_target_snap, "#.0") +
+             "\nSL(PE HR):" + str.tostring(os_pe_sl_snap, "#.0") +
+             "\nADJ at TV1:" + str.tostring(os_pe_tv1_snap, "#.0"),
+             style=label.style_label_down, color=col_os_pe,
+             textcolor=color.white, size=size.small)
+
+    if show_os and os_pe_exit
+        label.new(bar_index, pe_c_adj,
+             "PE SHORT EXIT (" + os_pe_exit_reason + ")\nPrem:" + str.tostring(pe_c, "#.0") + " Entry:" + str.tostring(os_pe_entry_snap, "#.0"),
+             style=label.style_label_up, color=os_pe_target_hit ? color.new(color.lime, 0) : os_pe_sl_hit ? color.new(color.red, 0) : color.new(color.gray, 0),
+             textcolor=color.black, size=size.small)
+
+    // -- Adjustment labels --
+    if show_os and adj_ce_trigger
+        label.new(bar_index, ce_l,
+             "ADJ: BUY CE\n(SELL PE hedge)\nPrem:" + str.tostring(ce_c, "#.0") +
+             "\nSL(PE HR):" + str.tostring(adj_ce_sl, "#.0") +
+             "\nTriggered: PE TV1=" + str.tostring(os_pe_tv1_snap, "#.0"),
+             style=label.style_label_up, color=color.new(#FF6600, 0),
+             textcolor=color.white, size=size.small)
+
+    if show_os and adj_pe_trigger
+        label.new(bar_index, pe_l_adj,
+             "ADJ: BUY PE\n(SELL CE hedge)\nPrem:" + str.tostring(pe_c, "#.0") +
+             "\nSL(CE HR):" + str.tostring(adj_pe_sl, "#.0") +
+             "\nTriggered: CE TV1=" + str.tostring(os_ce_tv1_snap, "#.0"),
+             style=label.style_label_up, color=color.new(#FF6600, 0),
+             textcolor=color.white, size=size.small)
+
+// ═══════════════════════════════════════════════════════════
+// 8I. ALERTS (with Buy/Sell filter)
+// ═══════════════════════════════════════════════════════════
+if enable_alerts
+    // -- BUY CE alerts --
+    if _allow_buy and ce_signal_trigger
+        alert("BUY CE | Prem: " + str.tostring(ce_entry_snap, "#.0") + " | T1: " + str.tostring(ce_t1_snap, "#.0") + " | T2: " + str.tostring(ce_t2_snap, "#.0") + " | SL: " + str.tostring(ce_sl_snap, "#.0") + " | HR: " + str.tostring(ce_hr_snap, "#.0") + "pts", _alert_freq)
+    if _allow_buy and ce_t1_hit
+        alert("CE TARGET 1 HIT | High: " + str.tostring(ce_h, "#.0"), _alert_freq)
+    if _allow_buy and ce_t2_hit
+        alert("CE TARGET 2 HIT | High: " + str.tostring(ce_h, "#.0"), _alert_freq)
+    if _allow_buy and ce_sl_hit
+        alert("CE SL HIT | Prem: " + str.tostring(ce_c, "#.0") + " | SL: " + str.tostring(ce_exit_sl_prem, "#.0"), _alert_freq)
+    if _allow_buy and ce_time_exit
+        alert("CE TIME EXIT | Prem: " + str.tostring(ce_c, "#.0") + " | Entry: " + str.tostring(ce_exit_entry_prem, "#.0"), _alert_freq)
+
+    // -- BUY PE alerts --
+    if _allow_buy and pe_signal_trigger
+        alert("BUY PE | Prem: " + str.tostring(pe_entry_snap, "#.0") + " | T1: " + str.tostring(pe_t1_snap, "#.0") + " | T2: " + str.tostring(pe_t2_snap, "#.0") + " | SL: " + str.tostring(pe_sl_snap, "#.0") + " | HR: " + str.tostring(pe_hr_snap, "#.0") + "pts", _alert_freq)
+    if _allow_buy and pe_t1_hit
+        alert("PE TARGET 1 HIT | High: " + str.tostring(pe_h, "#.0"), _alert_freq)
+    if _allow_buy and pe_t2_hit
+        alert("PE TARGET 2 HIT | High: " + str.tostring(pe_h, "#.0"), _alert_freq)
+    if _allow_buy and pe_sl_hit
+        alert("PE SL HIT | Prem: " + str.tostring(pe_c, "#.0") + " | SL: " + str.tostring(pe_exit_sl_prem, "#.0"), _alert_freq)
+    if _allow_buy and pe_time_exit
+        alert("PE TIME EXIT | Prem: " + str.tostring(pe_c, "#.0") + " | Entry: " + str.tostring(pe_exit_entry_prem, "#.0"), _alert_freq)
+
+    // -- SELL CE alerts --
+    if show_os and _allow_sell and os_ce_entry_trigger
+        alert("SELL CE | Prem: " + str.tostring(os_ce_entry_snap, "#.0") + " | Target: " + str.tostring(os_ce_target_snap, "#.0") + " | SL(CE HR): " + str.tostring(os_ce_sl_snap, "#.0") + " | ADJ TV1: " + str.tostring(os_ce_tv1_snap, "#.0"), _alert_freq)
+    if show_os and _allow_sell and os_ce_exit
+        alert("CE SHORT EXIT (" + os_ce_exit_reason + ") | Prem: " + str.tostring(ce_c, "#.0") + " | Entry: " + str.tostring(os_ce_entry_snap, "#.0"), _alert_freq)
+    if show_os and _allow_sell and adj_pe_trigger
+        alert("ADJ: BUY PE (SELL CE hedge) | Prem: " + str.tostring(pe_c, "#.0") + " | SL(CE HR): " + str.tostring(adj_pe_sl, "#.0") + " | CE TV1 hit: " + str.tostring(os_ce_tv1_snap, "#.0"), _alert_freq)
+
+    // -- SELL PE alerts --
+    if show_os and _allow_sell and os_pe_entry_trigger
+        alert("SELL PE | Prem: " + str.tostring(os_pe_entry_snap, "#.0") + " | Target: " + str.tostring(os_pe_target_snap, "#.0") + " | SL(PE HR): " + str.tostring(os_pe_sl_snap, "#.0") + " | ADJ TV1: " + str.tostring(os_pe_tv1_snap, "#.0"), _alert_freq)
+    if show_os and _allow_sell and os_pe_exit
+        alert("PE SHORT EXIT (" + os_pe_exit_reason + ") | Prem: " + str.tostring(pe_c, "#.0") + " | Entry: " + str.tostring(os_pe_entry_snap, "#.0"), _alert_freq)
+    if show_os and _allow_sell and adj_ce_trigger
+        alert("ADJ: BUY CE (SELL PE hedge) | Prem: " + str.tostring(ce_c, "#.0") + " | SL(PE HR): " + str.tostring(adj_ce_sl, "#.0") + " | PE TV1 hit: " + str.tostring(os_pe_tv1_snap, "#.0"), _alert_freq)
+
+// ═══════════════════════════════════════════════════════════
+// 9. CANDLE PLOTS
+// ═══════════════════════════════════════════════════════════
+ce_color = #008000
+pe_color = #FF0000
+
+plotcandle(ce_o, ce_h, ce_l, ce_c, title="CE Candles",
+     color      = ce_c >= ce_o ? ce_color : color.new(ce_color, 60),
+     bordercolor= ce_color)
+
+plotcandle(pe_o_adj, pe_h_adj, pe_l_adj, pe_c_adj, title="PE Candles",
+     color      = pe_c >= pe_o ? pe_color : color.new(pe_color, 60),
+     bordercolor= pe_color)
+
+// ═══════════════════════════════════════════════════════════
+// 9B. BEP / STRADDLE / VWAP PLOTS
+// ═══════════════════════════════════════════════════════════
+plot(show_bep      ? bep            : na, title="BEP",          color=col_bep,      linewidth=wid_bep)
+plot(show_straddle ? straddle_close : na, title="CE+PE Straddle", color=col_straddle, linewidth=wid_straddle)
+plot(show_vwap_ce  ? ce_vwap        : na, title="CE VWAP",      color=col_vwap_ce,  linewidth=wid_vwap)
+plot(show_vwap_pe  ? pe_vwap_adj    : na, title="PE VWAP",      color=col_vwap_pe,  linewidth=wid_vwap)
+
+// ═══════════════════════════════════════════════════════════
+// 10. LINE & LABEL DRAWING (barstate.islast only)
+// ═══════════════════════════════════════════════════════════
+var line  ln_fib_poc  = na
+var label lb_fib_poc  = na
+var line  ln_hr_upper = na
+var label lb_hr_upper = na
+var line  ln_hr_lower = na
+var label lb_hr_lower = na
+
+var line  ln_tce1 = na
+var label lb_tce1 = na
+var line  ln_tce2 = na
+var label lb_tce2 = na
+var line  ln_tce3 = na
+var label lb_tce3 = na
+var line  ln_tce4 = na
+var label lb_tce4 = na
+var line  ln_tce5 = na
+var label lb_tce5 = na
+var line  ln_tpe1 = na
+var label lb_tpe1 = na
+var line  ln_tpe2 = na
+var label lb_tpe2 = na
+var line  ln_tpe3 = na
+var label lb_tpe3 = na
+var line  ln_tpe4 = na
+var label lb_tpe4 = na
+var line  ln_tpe5 = na
+var label lb_tpe5 = na
+
+if barstate.islast
+    if show_fib and not na(session_start_time) and not na(fib_poc)
+        line.delete(ln_fib_poc)
+        label.delete(lb_fib_poc)
+        ln_fib_poc := line.new(session_start_time, fib_poc, int(time + 5 * timeframe.in_seconds() * 1000), fib_poc,
+             color=col_fib_poc, width=wid_fib, style=f_ls(sty_fib), xloc=xloc.bar_time)
+        lb_fib_poc := label.new(bar_index + 6, fib_poc,
+             "POC: " + str.tostring(fib_poc, "#.##"),
+             color=col_fib_poc, textcolor=color.black,
+             style=label.style_label_left, size=size.small)
+    else
+        line.delete(ln_fib_poc)
+        label.delete(lb_fib_poc)
+
+    if show_hr and not na(session_start_time) and not na(hr_upper_val)
+        line.delete(ln_hr_upper)
+        label.delete(lb_hr_upper)
+        _ce_lbl = hr_ce_above_poc
+             ? "CE HR (close-" + str.tostring(half_range, "#.0") + " | >POC): " + str.tostring(hr_upper_val, "#.##")
+             : "CE HR (close+" + str.tostring(half_range, "#.0") + " | <POC): " + str.tostring(hr_upper_val, "#.##")
+        ln_hr_upper := line.new(session_start_time, hr_upper_val, int(time + 5 * timeframe.in_seconds() * 1000), hr_upper_val,
+             color=col_hr_upper, width=wid_hr_upper, style=f_ls(sty_hr_upper), xloc=xloc.bar_time)
+        lb_hr_upper := label.new(bar_index + 6, hr_upper_val, _ce_lbl,
+             color=col_hr_upper, textcolor=color.black,
+             style=label.style_label_left, size=size.small)
+    else
+        line.delete(ln_hr_upper)
+        label.delete(lb_hr_upper)
+
+    if show_hr and not na(session_start_time) and not na(hr_lower_val)
+        line.delete(ln_hr_lower)
+        label.delete(lb_hr_lower)
+        _pe_lbl = hr_pe_above_poc
+             ? "PE HR (close-" + str.tostring(half_range, "#.0") + " | >POC): " + str.tostring(hr_lower_val, "#.##")
+             : "PE HR (close+" + str.tostring(half_range, "#.0") + " | <POC): " + str.tostring(hr_lower_val, "#.##")
+        ln_hr_lower := line.new(session_start_time, hr_lower_val, int(time + 5 * timeframe.in_seconds() * 1000), hr_lower_val,
+             color=col_hr_lower, width=wid_hr_lower, style=f_ls(sty_hr_lower), xloc=xloc.bar_time)
+        lb_hr_lower := label.new(bar_index + 6, hr_lower_val, _pe_lbl,
+             color=col_hr_lower, textcolor=color.white,
+             style=label.style_label_left, size=size.small)
+    else
+        line.delete(ln_hr_lower)
+        label.delete(lb_hr_lower)
+
+    line.delete(ln_tce1)
+    label.delete(lb_tce1)
+    line.delete(ln_tce2)
+    label.delete(lb_tce2)
+    line.delete(ln_tce3)
+    label.delete(lb_tce3)
+    line.delete(ln_tce4)
+    label.delete(lb_tce4)
+    line.delete(ln_tce5)
+    label.delete(lb_tce5)
+    line.delete(ln_tpe1)
+    label.delete(lb_tpe1)
+    line.delete(ln_tpe2)
+    label.delete(lb_tpe2)
+    line.delete(ln_tpe3)
+    label.delete(lb_tpe3)
+    line.delete(ln_tpe4)
+    label.delete(lb_tpe4)
+    line.delete(ln_tpe5)
+    label.delete(lb_tpe5)
+
+    if show_tval and show_tval_ce and not na(session_start_time)
+        _te = int(time + 5 * timeframe.in_seconds() * 1000)
+        if not na(tval_ce1)
+            ln_tce1 := line.new(session_start_time, tval_ce1, _te, tval_ce1, color=col_tval_ce1, width=1, style=line.style_dotted, xloc=xloc.bar_time)
+            lb_tce1 := label.new(bar_index + 6, tval_ce1, "CE TV1(-): " + str.tostring(tval_ce1, "#.##"), color=col_tval_ce1, textcolor=color.black, style=label.style_label_left, size=size.small)
+        if not na(tval_ce2)
+            ln_tce2 := line.new(session_start_time, tval_ce2, _te, tval_ce2, color=col_tval_ce2, width=1, style=line.style_dashed, xloc=xloc.bar_time)
+            lb_tce2 := label.new(bar_index + 6, tval_ce2, "CE TV2: " + str.tostring(tval_ce2, "#.##"), color=col_tval_ce2, textcolor=color.black, style=label.style_label_left, size=size.small)
+        if not na(tval_ce3)
+            ln_tce3 := line.new(session_start_time, tval_ce3, _te, tval_ce3, color=col_tval_ce3, width=2, style=line.style_dashed, xloc=xloc.bar_time)
+            lb_tce3 := label.new(bar_index + 6, tval_ce3, "CE TV3: " + str.tostring(tval_ce3, "#.##"), color=col_tval_ce3, textcolor=color.black, style=label.style_label_left, size=size.small)
+        if not na(tval_ce4)
+            ln_tce4 := line.new(session_start_time, tval_ce4, _te, tval_ce4, color=col_tval_ce4, width=2, style=line.style_dashed, xloc=xloc.bar_time)
+            lb_tce4 := label.new(bar_index + 6, tval_ce4, "CE TV4: " + str.tostring(tval_ce4, "#.##"), color=col_tval_ce4, textcolor=color.black, style=label.style_label_left, size=size.small)
+        if not na(tval_ce5)
+            ln_tce5 := line.new(session_start_time, tval_ce5, _te, tval_ce5, color=col_tval_ce5, width=3, style=line.style_dashed, xloc=xloc.bar_time)
+            lb_tce5 := label.new(bar_index + 6, tval_ce5, "CE TV5: " + str.tostring(tval_ce5, "#.##"), color=col_tval_ce5, textcolor=color.black, style=label.style_label_left, size=size.small)
+
+    if show_tval and show_tval_pe and not na(session_start_time)
+        _te = int(time + 5 * timeframe.in_seconds() * 1000)
+        if not na(tval_pe1)
+            ln_tpe1 := line.new(session_start_time, tval_pe1, _te, tval_pe1, color=col_tval_pe1, width=1, style=line.style_dotted, xloc=xloc.bar_time)
+            lb_tpe1 := label.new(bar_index + 6, tval_pe1, "PE TV1(-): " + str.tostring(tval_pe1, "#.##"), color=col_tval_pe1, textcolor=color.white, style=label.style_label_left, size=size.small)
+        if not na(tval_pe2)
+            ln_tpe2 := line.new(session_start_time, tval_pe2, _te, tval_pe2, color=col_tval_pe2, width=1, style=line.style_dashed, xloc=xloc.bar_time)
+            lb_tpe2 := label.new(bar_index + 6, tval_pe2, "PE TV2: " + str.tostring(tval_pe2, "#.##"), color=col_tval_pe2, textcolor=color.white, style=label.style_label_left, size=size.small)
+        if not na(tval_pe3)
+            ln_tpe3 := line.new(session_start_time, tval_pe3, _te, tval_pe3, color=col_tval_pe3, width=2, style=line.style_dashed, xloc=xloc.bar_time)
+            lb_tpe3 := label.new(bar_index + 6, tval_pe3, "PE TV3: " + str.tostring(tval_pe3, "#.##"), color=col_tval_pe3, textcolor=color.white, style=label.style_label_left, size=size.small)
+        if not na(tval_pe4)
+            ln_tpe4 := line.new(session_start_time, tval_pe4, _te, tval_pe4, color=col_tval_pe4, width=2, style=line.style_dashed, xloc=xloc.bar_time)
+            lb_tpe4 := label.new(bar_index + 6, tval_pe4, "PE TV4: " + str.tostring(tval_pe4, "#.##"), color=col_tval_pe4, textcolor=color.white, style=label.style_label_left, size=size.small)
+        if not na(tval_pe5)
+            ln_tpe5 := line.new(session_start_time, tval_pe5, _te, tval_pe5, color=col_tval_pe5, width=3, style=line.style_dashed, xloc=xloc.bar_time)
+            lb_tpe5 := label.new(bar_index + 6, tval_pe5, "PE TV5: " + str.tostring(tval_pe5, "#.##"), color=col_tval_pe5, textcolor=color.white, style=label.style_label_left, size=size.small)
+
+    // -- Historical lines for past N sessions --
+    if show_hist and array.size(hist_poc) > 0
+        int _n = array.size(hist_poc)
+        for i = 0 to _n - 1
+            int   _sb  = array.get(hist_start_bar, i)
+            int   _eb  = array.get(hist_end_bar,   i)
+            float _poc = array.get(hist_poc,   i)
+            float _hce = array.get(hist_hr_ce, i)
+            float _hpe = array.get(hist_hr_pe, i)
+            float _tc1 = array.get(hist_tce1,  i)
+            float _tc2 = array.get(hist_tce2,  i)
+            float _tc3 = array.get(hist_tce3,  i)
+            float _tc4 = array.get(hist_tce4,  i)
+            float _tc5 = array.get(hist_tce5,  i)
+            float _tp1 = array.get(hist_tpe1,  i)
+            float _tp2 = array.get(hist_tpe2,  i)
+            float _tp3 = array.get(hist_tpe3,  i)
+            float _tp4 = array.get(hist_tpe4,  i)
+            float _tp5 = array.get(hist_tpe5,  i)
+
+            int _alpha = 60 + ((_n - 1 - i) * 15)
+            _alpha := math.min(_alpha, 90)
+
+            if show_fib and not na(_poc)
+                line.new(_sb, _poc, _eb, _poc, color=color.new(col_fib_poc, _alpha), width=1, style=line.style_dashed)
+            if show_hr and not na(_hce)
+                line.new(_sb, _hce, _eb, _hce, color=color.new(col_hr_upper, _alpha), width=1, style=line.style_dashed)
+            if show_hr and not na(_hpe)
+                line.new(_sb, _hpe, _eb, _hpe, color=color.new(col_hr_lower, _alpha), width=1, style=line.style_dashed)
+            if show_tval and show_tval_ce
+                if not na(_tc1)
+                    line.new(_sb, _tc1, _eb, _tc1, color=color.new(col_tval_ce1, _alpha), width=1, style=line.style_dotted)
+                if not na(_tc2)
+                    line.new(_sb, _tc2, _eb, _tc2, color=color.new(col_tval_ce2, _alpha), width=1, style=line.style_dotted)
+                if not na(_tc3)
+                    line.new(_sb, _tc3, _eb, _tc3, color=color.new(col_tval_ce3, _alpha), width=1, style=line.style_dotted)
+                if not na(_tc4)
+                    line.new(_sb, _tc4, _eb, _tc4, color=color.new(col_tval_ce4, _alpha), width=1, style=line.style_dotted)
+                if not na(_tc5)
+                    line.new(_sb, _tc5, _eb, _tc5, color=color.new(col_tval_ce5, _alpha), width=1, style=line.style_dotted)
+            if show_tval and show_tval_pe
+                if not na(_tp1)
+                    line.new(_sb, _tp1, _eb, _tp1, color=color.new(col_tval_pe1, _alpha), width=1, style=line.style_dotted)
+                if not na(_tp2)
+                    line.new(_sb, _tp2, _eb, _tp2, color=color.new(col_tval_pe2, _alpha), width=1, style=line.style_dotted)
+                if not na(_tp3)
+                    line.new(_sb, _tp3, _eb, _tp3, color=color.new(col_tval_pe3, _alpha), width=1, style=line.style_dotted)
+                if not na(_tp4)
+                    line.new(_sb, _tp4, _eb, _tp4, color=color.new(col_tval_pe4, _alpha), width=1, style=line.style_dotted)
+                if not na(_tp5)
+                    line.new(_sb, _tp5, _eb, _tp5, color=color.new(col_tval_pe5, _alpha), width=1, style=line.style_dotted)
+
+// -- BEP label --
+var label lb_bep = na
+if barstate.islast
+    if show_bep and not na(bep)
+        label.delete(lb_bep)
+        lb_bep := label.new(bar_index + 5, bep, "BEP: " + str.tostring(bep, "#.##"),
+             color=col_bep, textcolor=color.white, style=label.style_label_left, size=size.small)
+    else
+        label.delete(lb_bep)
+
+// -- Straddle label --
+var label lb_straddle = na
+if barstate.islast
+    if show_straddle and not na(straddle_close)
+        label.delete(lb_straddle)
+        lb_straddle := label.new(bar_index + 5, straddle_close, "Straddle: " + str.tostring(straddle_close, "#.##"),
+             color=col_straddle, textcolor=color.black, style=label.style_label_left, size=size.small)
+    else
+        label.delete(lb_straddle)
+
+// -- Straddle SL line --
+var line  ln_straddle_sl = na
+var label lb_straddle_sl = na
+if barstate.islast
+    if show_straddle and show_straddle_sl and not na(straddle_entry_bar) and not na(straddle_sl_val)
+        line.delete(ln_straddle_sl)
+        label.delete(lb_straddle_sl)
+        ln_straddle_sl := line.new(straddle_entry_bar, straddle_sl_val, bar_index + 5, straddle_sl_val,
+             color=col_straddle_sl, width=wid_straddle, style=line.style_dashed)
+        lb_straddle_sl := label.new(bar_index + 5, straddle_sl_val, "Straddle SL: " + str.tostring(straddle_sl_val, "#.##"),
+             color=col_straddle_sl, textcolor=color.white, style=label.style_label_left, size=size.small)
+    else
+        line.delete(ln_straddle_sl)
+        label.delete(lb_straddle_sl)
+
+// -- CE Prev Day High --
+var line  ln_ce_pdh = na
+var label lb_ce_pdh = na
+if barstate.islast
+    if show_all_ce and show_ce_pdh and not na(session_start_bar)
+        line.delete(ln_ce_pdh)
+        label.delete(lb_ce_pdh)
+        ln_ce_pdh := line.new(session_start_bar, ce_d_h, bar_index + 5, ce_d_h, color=col_ce_pdh, width=wid_ce_pdh, style=f_ls(sty_ce_pdh))
+        lb_ce_pdh := label.new(bar_index + 5, ce_d_h, "CE PDH: " + str.tostring(ce_d_h, "#.##"), color=col_ce_pdh, textcolor=color.white, style=label.style_label_left, size=size.small)
+    else
+        line.delete(ln_ce_pdh)
+        label.delete(lb_ce_pdh)
+
+// -- CE Prev Day Low --
+var line  ln_ce_pdl = na
+var label lb_ce_pdl = na
+if barstate.islast
+    if show_all_ce and show_ce_pdl and not na(session_start_bar)
+        line.delete(ln_ce_pdl)
+        label.delete(lb_ce_pdl)
+        ln_ce_pdl := line.new(session_start_bar, ce_d_l, bar_index + 5, ce_d_l, color=col_ce_pdl, width=wid_ce_pdl, style=f_ls(sty_ce_pdl))
+        lb_ce_pdl := label.new(bar_index + 5, ce_d_l, "CE PDL: " + str.tostring(ce_d_l, "#.##"), color=col_ce_pdl, textcolor=color.white, style=label.style_label_left, size=size.small)
+    else
+        line.delete(ln_ce_pdl)
+        label.delete(lb_ce_pdl)
+
+// -- CE Opening Candle High --
+var line  ln_ce_och = na
+var label lb_ce_och = na
+if barstate.islast
+    if show_all_ce and show_ce_och and not na(session_start_bar) and not na(ce_open_high)
+        line.delete(ln_ce_och)
+        label.delete(lb_ce_och)
+        ln_ce_och := line.new(session_start_bar, ce_open_high, bar_index + 5, ce_open_high, color=col_ce_och, width=wid_ce_och, style=f_ls(sty_ce_och))
+        lb_ce_och := label.new(bar_index + 5, ce_open_high, "CE OCH: " + str.tostring(ce_open_high, "#.##"), color=col_ce_och, textcolor=color.white, style=label.style_label_left, size=size.small)
+    else
+        line.delete(ln_ce_och)
+        label.delete(lb_ce_och)
+
+// -- CE Opening Candle Low --
+var line  ln_ce_ocl = na
+var label lb_ce_ocl = na
+if barstate.islast
+    if show_all_ce and show_ce_ocl and not na(session_start_bar) and not na(ce_open_low)
+        line.delete(ln_ce_ocl)
+        label.delete(lb_ce_ocl)
+        ln_ce_ocl := line.new(session_start_bar, ce_open_low, bar_index + 5, ce_open_low, color=col_ce_ocl, width=wid_ce_ocl, style=f_ls(sty_ce_ocl))
+        lb_ce_ocl := label.new(bar_index + 5, ce_open_low, "CE OCL: " + str.tostring(ce_open_low, "#.##"), color=col_ce_ocl, textcolor=color.white, style=label.style_label_left, size=size.small)
+    else
+        line.delete(ln_ce_ocl)
+        label.delete(lb_ce_ocl)
+
+// -- CE Opening Candle Mid --
+var line  ln_ce_ocm = na
+var label lb_ce_ocm = na
+if barstate.islast
+    if show_all_ce and show_ce_ocm and not na(session_start_bar) and not na(ce_open_high) and not na(ce_open_low)
+        line.delete(ln_ce_ocm)
+        label.delete(lb_ce_ocm)
+        ln_ce_ocm := line.new(session_start_bar, ce_oc_mid, bar_index + 5, ce_oc_mid, color=col_ce_ocm, width=wid_ce_ocm, style=f_ls(sty_ce_ocm))
+        lb_ce_ocm := label.new(bar_index + 5, ce_oc_mid, "CE OCM: " + str.tostring(ce_oc_mid, "#.##"), color=col_ce_ocm, textcolor=color.black, style=label.style_label_left, size=size.small)
+    else
+        line.delete(ln_ce_ocm)
+        label.delete(lb_ce_ocm)
+
+// -- CE Target 1 --
+var line  ln_ce_t1 = na
+var label lb_ce_t1 = na
+if barstate.islast
+    if show_all_ce and show_ce_t1 and not na(session_start_bar) and not na(ce_open_high) and not na(ce_open_low)
+        line.delete(ln_ce_t1)
+        label.delete(lb_ce_t1)
+        ln_ce_t1 := line.new(session_start_bar, ce_t1_val, bar_index + 5, ce_t1_val, color=col_ce_t1, width=wid_ce_t1, style=f_ls(sty_ce_t1))
+        lb_ce_t1 := label.new(bar_index + 5, ce_t1_val, "CE T1(" + str.tostring(pct_ce_t1, "#") + "%): " + str.tostring(ce_t1_val, "#.##"), color=col_ce_t1, textcolor=color.black, style=label.style_label_left, size=size.small)
+    else
+        line.delete(ln_ce_t1)
+        label.delete(lb_ce_t1)
+
+// -- CE Target 2 --
+var line  ln_ce_t2 = na
+var label lb_ce_t2 = na
+if barstate.islast
+    if show_all_ce and show_ce_t2 and not na(session_start_bar) and not na(ce_open_high) and not na(ce_open_low)
+        line.delete(ln_ce_t2)
+        label.delete(lb_ce_t2)
+        ln_ce_t2 := line.new(session_start_bar, ce_t2_val, bar_index + 5, ce_t2_val, color=col_ce_t2, width=wid_ce_t2, style=f_ls(sty_ce_t2))
+        lb_ce_t2 := label.new(bar_index + 5, ce_t2_val, "CE T2(" + str.tostring(pct_ce_t2, "#") + "%): " + str.tostring(ce_t2_val, "#.##"), color=col_ce_t2, textcolor=color.black, style=label.style_label_left, size=size.small)
+    else
+        line.delete(ln_ce_t2)
+        label.delete(lb_ce_t2)
+
+// -- PE Prev Day High --
+var line  ln_pe_pdh = na
+var label lb_pe_pdh = na
+if barstate.islast
+    if show_all_pe and show_pe_pdh and not na(session_start_bar)
+        line.delete(ln_pe_pdh)
+        label.delete(lb_pe_pdh)
+        ln_pe_pdh := line.new(session_start_bar, pe_d_h - gap_offset, bar_index + 5, pe_d_h - gap_offset, color=col_pe_pdh, width=wid_pe_pdh, style=f_ls(sty_pe_pdh))
+        lb_pe_pdh := label.new(bar_index + 5, pe_d_h - gap_offset, "PE PDH: " + str.tostring(pe_d_h, "#.##"), color=col_pe_pdh, textcolor=color.white, style=label.style_label_left, size=size.small)
+    else
+        line.delete(ln_pe_pdh)
+        label.delete(lb_pe_pdh)
+
+// -- PE Prev Day Low --
+var line  ln_pe_pdl = na
+var label lb_pe_pdl = na
+if barstate.islast
+    if show_all_pe and show_pe_pdl and not na(session_start_bar)
+        line.delete(ln_pe_pdl)
+        label.delete(lb_pe_pdl)
+        ln_pe_pdl := line.new(session_start_bar, pe_d_l - gap_offset, bar_index + 5, pe_d_l - gap_offset, color=col_pe_pdl, width=wid_pe_pdl, style=f_ls(sty_pe_pdl))
+        lb_pe_pdl := label.new(bar_index + 5, pe_d_l - gap_offset, "PE PDL: " + str.tostring(pe_d_l, "#.##"), color=col_pe_pdl, textcolor=color.white, style=label.style_label_left, size=size.small)
+    else
+        line.delete(ln_pe_pdl)
+        label.delete(lb_pe_pdl)
+
+// -- PE Opening Candle High --
+var line  ln_pe_och = na
+var label lb_pe_och = na
+if barstate.islast
+    if show_all_pe and show_pe_och and not na(session_start_bar) and not na(pe_open_high)
+        line.delete(ln_pe_och)
+        label.delete(lb_pe_och)
+        ln_pe_och := line.new(session_start_bar, pe_open_high - gap_offset, bar_index + 5, pe_open_high - gap_offset, color=col_pe_och, width=wid_pe_och, style=f_ls(sty_pe_och))
+        lb_pe_och := label.new(bar_index + 5, pe_open_high - gap_offset, "PE OCH: " + str.tostring(pe_open_high, "#.##"), color=col_pe_och, textcolor=color.white, style=label.style_label_left, size=size.small)
+    else
+        line.delete(ln_pe_och)
+        label.delete(lb_pe_och)
+
+// -- PE Opening Candle Low --
+var line  ln_pe_ocl = na
+var label lb_pe_ocl = na
+if barstate.islast
+    if show_all_pe and show_pe_ocl and not na(session_start_bar) and not na(pe_open_low)
+        line.delete(ln_pe_ocl)
+        label.delete(lb_pe_ocl)
+        ln_pe_ocl := line.new(session_start_bar, pe_open_low - gap_offset, bar_index + 5, pe_open_low - gap_offset, color=col_pe_ocl, width=wid_pe_ocl, style=f_ls(sty_pe_ocl))
+        lb_pe_ocl := label.new(bar_index + 5, pe_open_low - gap_offset, "PE OCL: " + str.tostring(pe_open_low, "#.##"), color=col_pe_ocl, textcolor=color.white, style=label.style_label_left, size=size.small)
+    else
+        line.delete(ln_pe_ocl)
+        label.delete(lb_pe_ocl)
+
+// -- PE Opening Candle Mid --
+var line  ln_pe_ocm = na
+var label lb_pe_ocm = na
+if barstate.islast
+    if show_all_pe and show_pe_ocm and not na(session_start_bar) and not na(pe_open_high) and not na(pe_open_low)
+        line.delete(ln_pe_ocm)
+        label.delete(lb_pe_ocm)
+        ln_pe_ocm := line.new(session_start_bar, pe_oc_mid - gap_offset, bar_index + 5, pe_oc_mid - gap_offset, color=col_pe_ocm, width=wid_pe_ocm, style=f_ls(sty_pe_ocm))
+        lb_pe_ocm := label.new(bar_index + 5, pe_oc_mid - gap_offset, "PE OCM: " + str.tostring(pe_oc_mid, "#.##"), color=col_pe_ocm, textcolor=color.black, style=label.style_label_left, size=size.small)
+    else
+        line.delete(ln_pe_ocm)
+        label.delete(lb_pe_ocm)
+
+// -- PE Target 1 --
+var line  ln_pe_t1 = na
+var label lb_pe_t1 = na
+if barstate.islast
+    if show_all_pe and show_pe_t1 and not na(session_start_bar) and not na(pe_open_high) and not na(pe_open_low)
+        line.delete(ln_pe_t1)
+        label.delete(lb_pe_t1)
+        ln_pe_t1 := line.new(session_start_bar, pe_t1_val - gap_offset, bar_index + 5, pe_t1_val - gap_offset, color=col_pe_t1, width=wid_pe_t1, style=f_ls(sty_pe_t1))
+        lb_pe_t1 := label.new(bar_index + 5, pe_t1_val - gap_offset, "PE T1(" + str.tostring(pct_pe_t1, "#") + "%): " + str.tostring(pe_t1_val, "#.##"), color=col_pe_t1, textcolor=color.black, style=label.style_label_left, size=size.small)
+    else
+        line.delete(ln_pe_t1)
+        label.delete(lb_pe_t1)
+
+// -- PE Target 2 --
+var line  ln_pe_t2 = na
+var label lb_pe_t2 = na
+if barstate.islast
+    if show_all_pe and show_pe_t2 and not na(session_start_bar) and not na(pe_open_high) and not na(pe_open_low)
+        line.delete(ln_pe_t2)
+        label.delete(lb_pe_t2)
+        ln_pe_t2 := line.new(session_start_bar, pe_t2_val - gap_offset, bar_index + 5, pe_t2_val - gap_offset, color=col_pe_t2, width=wid_pe_t2, style=f_ls(sty_pe_t2))
+        lb_pe_t2 := label.new(bar_index + 5, pe_t2_val - gap_offset, "PE T2(" + str.tostring(pct_pe_t2, "#") + "%): " + str.tostring(pe_t2_val, "#.##"), color=col_pe_t2, textcolor=color.black, style=label.style_label_left, size=size.small)
+    else
+        line.delete(ln_pe_t2)
+        label.delete(lb_pe_t2)
+
+// ═══════════════════════════════════════════════════════════
+// 11. DASHBOARD
+// ═══════════════════════════════════════════════════════════
+col_act     = color.new(color.green,  0)
+col_wait    = color.new(#333333,     30)
+col_hdr     = color.new(#1a1a2e,      0)
+col_ref     = color.new(#1e1e2e,     10)
+col_bep_row = color.new(#444444,     40)
+txt_white   = color.white
+txt_black   = color.black
+txt_dim     = color.new(color.white, 40)
+
+fmt2(v) => na(v) ? "n/a" : str.tostring(v, "#.00")
+pad2(v) => v < 10 ? "0" + str.tostring(v) : str.tostring(v)
+
+f_pos(p) =>
+    var _r = position.bottom_left
+    if p == "Top Left"
+        _r := position.top_left
+    else if p == "Top Right"
+        _r := position.top_right
+    else if p == "Bottom Right"
+        _r := position.bottom_right
+    _r
+
+var table dash = na
+
+if show_dashboard and not mobile_mode
+    if na(dash)
+        dash := table.new(f_pos(dash_pos), columns=2, rows=30,
+                 bgcolor=color.new(#0a0a14, 5),
+                 border_color=color.new(color.gray, 60),
+                 border_width=1)
+
+    table.cell(dash, 0, 0, "CE & PE  Dashboard", bgcolor=col_hdr, text_color=txt_white, text_halign=text.align_center, text_size=size.normal)
+    table.cell(dash, 1, 0, "", bgcolor=col_hdr)
+    table.merge_cells(dash, 0, 0, 1, 0)
+
+    table.cell(dash, 0, 1, "  Signal", bgcolor=color.new(#111133, 0), text_color=txt_dim, text_size=size.small)
+    table.cell(dash, 1, 1, "Value / Status", bgcolor=color.new(#111133, 0), text_color=txt_dim, text_size=size.small, text_halign=text.align_center)
+
+    ce_above_vwap = not na(ce_vwap) and ce_c > ce_vwap
+    ce_above_hr   = not na(hr_lower_val) and ce_c > hr_lower_val
+    ce_sig_txt = long_ce ? "** LONG CE **" :
+         (not ce_above_vwap ? "WAIT: below VWAP" :
+         (not ce_above_hr   ? "WAIT: below PE HR(" + str.tostring(hr_lower_val,"#.0") + ")" :
+         (not spot_ce_trend_ok ? "WAIT: spot trend" : "WAIT: gating")))
+    ce_sig_bg  = long_ce ? col_act : col_wait
+    table.cell(dash, 0, 2, "Long CE", bgcolor=ce_sig_bg, text_color=txt_white, text_size=size.small)
+    table.cell(dash, 1, 2, ce_sig_txt, bgcolor=ce_sig_bg, text_color=txt_white, text_size=size.small, text_halign=text.align_center)
+
+    pe_above_vwap = not na(pe_vwap) and pe_c > pe_vwap
+    pe_above_hr   = not na(hr_upper_val) and pe_c > hr_upper_val
+    pe_sig_txt = long_pe ? "** LONG PE **" :
+         (not pe_above_vwap ? "WAIT: below VWAP" :
+         (not pe_above_hr   ? "WAIT: below CE HR(" + str.tostring(hr_upper_val,"#.0") + ")" :
+         (not spot_pe_trend_ok ? "WAIT: spot trend" : "WAIT: gating")))
+    pe_sig_bg  = long_pe ? col_act : col_wait
+    table.cell(dash, 0, 3, "Long PE", bgcolor=pe_sig_bg, text_color=txt_white, text_size=size.small)
+    table.cell(dash, 1, 3, pe_sig_txt, bgcolor=pe_sig_bg, text_color=txt_white, text_size=size.small, text_halign=text.align_center)
+
+    table.cell(dash, 0, 4, "-- VWAP Values --", bgcolor=color.new(#222244, 0), text_color=txt_dim, text_halign=text.align_center, text_size=size.small)
+    table.cell(dash, 1, 4, "", bgcolor=color.new(#222244, 0))
+    table.merge_cells(dash, 0, 4, 1, 4)
+
+    ce_vwap_str = fmt2(ce_vwap)
+    ce_vs_vwap  = not na(ce_vwap) and ce_c > ce_vwap ? " [above]" : " [below]"
+    table.cell(dash, 0, 5, "CE VWAP", bgcolor=color.new(#00FFFF, 80), text_color=txt_white, text_size=size.small)
+    table.cell(dash, 1, 5, ce_vwap_str + ce_vs_vwap, bgcolor=color.new(#00FFFF, 80), text_color=txt_white, text_size=size.small, text_halign=text.align_center)
+
+    pe_vwap_str = fmt2(pe_vwap)
+    pe_vs_vwap  = not na(pe_vwap) and pe_c > pe_vwap ? " [above]" : " [below]"
+    table.cell(dash, 0, 6, "PE VWAP", bgcolor=color.new(#FF00FF, 80), text_color=txt_white, text_size=size.small)
+    table.cell(dash, 1, 6, pe_vwap_str + pe_vs_vwap, bgcolor=color.new(#FF00FF, 80), text_color=txt_white, text_size=size.small, text_halign=text.align_center)
+
+    table.cell(dash, 0, 7, "BEP (Prev Close Avg)", bgcolor=col_bep_row, text_color=txt_white, text_size=size.small)
+    table.cell(dash, 1, 7, fmt2(bep), bgcolor=col_bep_row, text_color=txt_white, text_size=size.small, text_halign=text.align_center)
+
+    table.cell(dash, 0, 8, "-- Reference Levels --", bgcolor=color.new(#222244, 0), text_color=txt_dim, text_halign=text.align_center, text_size=size.small)
+    table.cell(dash, 1, 8, "", bgcolor=color.new(#222244, 0))
+    table.merge_cells(dash, 0, 8, 1, 8)
+
+    table.cell(dash, 0, 9, "POC", bgcolor=col_ref, text_color=color.yellow, text_size=size.small)
+    table.cell(dash, 1, 9, fmt2(fib_poc), bgcolor=col_ref, text_color=color.yellow, text_size=size.small, text_halign=text.align_center)
+
+    table.cell(dash, 0, 10, "Half Range (CE/PE Close)", bgcolor=color.new(#1a1a00, 30), text_color=color.new(color.white, 20), text_size=size.small)
+    table.cell(dash, 1, 10, str.tostring(half_range, "#.0") + " pts", bgcolor=color.new(#1a1a00, 30), text_color=color.new(color.white, 20), text_size=size.small, text_halign=text.align_center)
+
+    hr_upper_str = not na(hr_upper_val) ? fmt2(hr_upper_val) + (hr_ce_above_poc ? " [>POC -HR]" : " [<POC +HR]") : "n/a"
+    table.cell(dash, 0, 11, "HR CE Level", bgcolor=color.new(#003322, 0), text_color=col_hr_upper, text_size=size.small)
+    table.cell(dash, 1, 11, hr_upper_str, bgcolor=color.new(#003322, 0), text_color=col_hr_upper, text_size=size.small, text_halign=text.align_center)
+
+    hr_lower_str = not na(hr_lower_val) ? fmt2(hr_lower_val) + (hr_pe_above_poc ? " [>POC -HR]" : " [<POC +HR]") : "n/a"
+    table.cell(dash, 0, 12, "HR PE Level", bgcolor=color.new(#330000, 0), text_color=col_hr_lower, text_size=size.small)
+    table.cell(dash, 1, 12, hr_lower_str, bgcolor=color.new(#330000, 0), text_color=col_hr_lower, text_size=size.small, text_halign=text.align_center)
+
+    table.cell(dash, 0, 13, "-- Active Trade --", bgcolor=color.new(#1a1a00, 0), text_color=color.new(color.yellow, 0), text_halign=text.align_center, text_size=size.small)
+    table.cell(dash, 1, 13, "", bgcolor=color.new(#1a1a00, 0))
+    table.merge_cells(dash, 0, 13, 1, 13)
+
+    ce_trade_txt = in_ce_trade ? "IN TRADE" : (ce_trade_done ? "Done for Day" : "No Trade")
+    ce_trade_bg  = in_ce_trade ? color.new(color.green, 20) : color.new(#222222, 0)
+    ce_trade_val = in_ce_trade ?
+         "E:" + str.tostring(ce_entry_prem, "#.0") +
+         " T1:" + str.tostring(ce_target1_prem, "#.0") + (ce_t1_done ? "[x]" : "") +
+         " T2:" + str.tostring(ce_target2_prem, "#.0") +
+         " SL:" + str.tostring(ce_sl_prem_lvl, "#.0") : "--"
+    table.cell(dash, 0, 14, "CE " + ce_trade_txt, bgcolor=ce_trade_bg, text_color=txt_white, text_size=size.small)
+    table.cell(dash, 1, 14, ce_trade_val, bgcolor=ce_trade_bg, text_color=txt_white, text_size=size.small, text_halign=text.align_center)
+
+    pe_trade_txt = in_pe_trade ? "IN TRADE" : (pe_trade_done ? "Done for Day" : "No Trade")
+    pe_trade_bg  = in_pe_trade ? color.new(color.red, 20) : color.new(#222222, 0)
+    pe_trade_val = in_pe_trade ?
+         "E:" + str.tostring(pe_entry_prem, "#.0") +
+         " T1:" + str.tostring(pe_target1_prem, "#.0") + (pe_t1_done ? "[x]" : "") +
+         " T2:" + str.tostring(pe_target2_prem, "#.0") +
+         " SL:" + str.tostring(pe_sl_prem_lvl, "#.0") : "--"
+    table.cell(dash, 0, 15, "PE " + pe_trade_txt, bgcolor=pe_trade_bg, text_color=txt_white, text_size=size.small)
+    table.cell(dash, 1, 15, pe_trade_val, bgcolor=pe_trade_bg, text_color=txt_white, text_size=size.small, text_halign=text.align_center)
+
+    spot_vs_vwap = not na(spot_close) and not na(spot_vwap) ? (spot_close > spot_vwap ? " [above]" : " [below]") : ""
+    table.cell(dash, 0, 16, "Spot VWAP", bgcolor=color.new(#111111, 0), text_color=txt_dim, text_size=size.small)
+    table.cell(dash, 1, 16, fmt2(spot_vwap) + spot_vs_vwap, bgcolor=color.new(#111111, 0), text_color=color.white, text_size=size.small, text_halign=text.align_center)
+
+    spot_vs_mid = not na(spot_close) and not na(spot_oc_mid) ? (spot_close > spot_oc_mid ? " [above]" : " [below]") : ""
+    table.cell(dash, 0, 17, "Spot ORB Mid", bgcolor=color.new(#111111, 0), text_color=txt_dim, text_size=size.small)
+    table.cell(dash, 1, 17, fmt2(spot_oc_mid) + spot_vs_mid, bgcolor=color.new(#111111, 0), text_color=color.white, text_size=size.small, text_halign=text.align_center)
+
+    table.cell(dash, 0, 18, "Spot Now", bgcolor=color.new(#111111, 0), text_color=txt_dim, text_size=size.small)
+    table.cell(dash, 1, 18, fmt2(spot_close), bgcolor=color.new(#111111, 0), text_color=color.white, text_size=size.small, text_halign=text.align_center)
+
+    straddle_entry_lbl = "Straddle @ " + pad2(straddle_entry_hh) + ":" + pad2(straddle_entry_mm)
+    table.cell(dash, 0, 19, straddle_entry_lbl, bgcolor=color.new(#444400, 30), text_color=color.yellow, text_size=size.small)
+    table.cell(dash, 1, 19, fmt2(straddle_entry), bgcolor=color.new(#444400, 30), text_color=color.yellow, text_size=size.small, text_halign=text.align_center)
+
+    straddle_pnl_str = na(straddle_pnl_pct) ? "n/a" : str.tostring(straddle_pnl_pct, "#.00") + "%"
+    straddle_pnl_bg  = na(straddle_pnl_pct) ? color.new(#222222, 0) : (straddle_pnl_pct >= 0 ? color.new(color.green, 60) : color.new(color.red, 60))
+    table.cell(dash, 0, 20, "Straddle P&L %", bgcolor=straddle_pnl_bg, text_color=txt_white, text_size=size.small)
+    table.cell(dash, 1, 20, straddle_pnl_str, bgcolor=straddle_pnl_bg, text_color=txt_white, text_size=size.small, text_halign=text.align_center)
+
+    table.cell(dash, 0, 21, "Straddle SL", bgcolor=color.new(color.red, 70), text_color=col_straddle_sl, text_size=size.small)
+    table.cell(dash, 1, 21, fmt2(straddle_sl_val), bgcolor=color.new(color.red, 70), text_color=col_straddle_sl, text_size=size.small, text_halign=text.align_center)
+
+    table.cell(dash, 0, 22, "-- Option Selling --", bgcolor=color.new(#222244, 0), text_color=txt_dim, text_halign=text.align_center, text_size=size.small)
+    table.cell(dash, 1, 22, "", bgcolor=color.new(#222244, 0))
+    table.merge_cells(dash, 0, 22, 1, 22)
+
+    os_ce_status = os_ce_active ? ("SHORT @" + str.tostring(os_ce_entry, "#.0") + " Tgt:" + str.tostring(os_ce_target, "#.0") + " SL(HR):" + str.tostring(os_ce_sl, "#.0")) : (na(os_ce_entry) ? "No Position" : "Closed (" + os_ce_exit_reason_persist + ")")
+    os_ce_bg     = os_ce_active ? color.new(color.green, 60) : color.new(#222222, 0)
+    table.cell(dash, 0, 23, "CE Short", bgcolor=os_ce_bg, text_color=col_os_ce, text_size=size.small)
+    table.cell(dash, 1, 23, os_ce_status, bgcolor=os_ce_bg, text_color=txt_white, text_size=size.small, text_halign=text.align_center)
+
+    os_pe_status = os_pe_active ? ("SHORT @" + str.tostring(os_pe_entry, "#.0") + " Tgt:" + str.tostring(os_pe_target, "#.0") + " SL(HR):" + str.tostring(os_pe_sl, "#.0")) : (na(os_pe_entry) ? "No Position" : "Closed (" + os_pe_exit_reason_persist + ")")
+    os_pe_bg     = os_pe_active ? color.new(color.red, 60) : color.new(#222222, 0)
+    table.cell(dash, 0, 24, "PE Short", bgcolor=os_pe_bg, text_color=col_os_pe, text_size=size.small)
+    table.cell(dash, 1, 24, os_pe_status, bgcolor=os_pe_bg, text_color=txt_white, text_size=size.small, text_halign=text.align_center)
+
+    table.cell(dash, 0, 25, "HR / TV pts", bgcolor=color.new(#0a0a20, 0), text_color=txt_dim, text_size=size.small)
+    table.cell(dash, 1, 25, str.tostring(nz(session_half_range, half_range), "#.0") + " / " + str.tostring(nz(session_half_range, half_range) / 2.0, "#.0"), bgcolor=color.new(#0a0a20, 0), text_color=color.new(color.white, 30), text_size=size.small, text_halign=text.align_center)
+
+    // -- Adjustment rows --
+    table.cell(dash, 0, 26, "-- Adjustment --", bgcolor=color.new(#332200, 0), text_color=color.new(#FF6600, 0), text_halign=text.align_center, text_size=size.small)
+    table.cell(dash, 1, 26, "", bgcolor=color.new(#332200, 0))
+    table.merge_cells(dash, 0, 26, 1, 26)
+
+    // ADJ CE row: SELL PE active, waiting for PE to rise to snapped PE TV1
+    _adj_ce_tv1_disp = not na(os_pe_tv1_snap) ? str.tostring(os_pe_tv1_snap, "#.0") : str.tostring(tval_pe1, "#.0")
+    adj_ce_status = adj_ce_fired ? ("BUY CE @" + str.tostring(adj_ce_entry, "#.0") + " SL(PE HR):" + str.tostring(adj_ce_sl, "#.0")) : (os_pe_active ? "PE rising to TV1=" + _adj_ce_tv1_disp : (not na(os_pe_entry) ? "Closed" : "--"))
+    adj_ce_bg     = adj_ce_fired ? color.new(#FF6600, 40) : color.new(#222222, 0)
+    table.cell(dash, 0, 27, "ADJ: BUY CE (SELL PE)", bgcolor=adj_ce_bg, text_color=color.new(#FF6600, 0), text_size=size.small)
+    table.cell(dash, 1, 27, adj_ce_status, bgcolor=adj_ce_bg, text_color=txt_white, text_size=size.small, text_halign=text.align_center)
+
+    // ADJ PE row: SELL CE active, waiting for CE to rise to snapped CE TV1
+    _adj_pe_tv1_disp = not na(os_ce_tv1_snap) ? str.tostring(os_ce_tv1_snap, "#.0") : str.tostring(tval_ce1, "#.0")
+    adj_pe_status = adj_pe_fired ? ("BUY PE @" + str.tostring(adj_pe_entry, "#.0") + " SL(CE HR):" + str.tostring(adj_pe_sl, "#.0")) : (os_ce_active ? "CE rising to TV1=" + _adj_pe_tv1_disp : (not na(os_ce_entry) ? "Closed" : "--"))
+    adj_pe_bg     = adj_pe_fired ? color.new(#FF6600, 40) : color.new(#222222, 0)
+    table.cell(dash, 0, 28, "ADJ: BUY PE (SELL CE)", bgcolor=adj_pe_bg, text_color=color.new(#FF6600, 0), text_size=size.small)
+    table.cell(dash, 1, 28, adj_pe_status, bgcolor=adj_pe_bg, text_color=txt_white, text_size=size.small, text_halign=text.align_center)
+
+    // -- Alert mode row --
+    table.cell(dash, 0, 29, "Alert Mode", bgcolor=color.new(#1a1a2e, 0), text_color=txt_dim, text_size=size.small)
+    table.cell(dash, 1, 29, alert_mode, bgcolor=color.new(#1a1a2e, 0), text_color=color.yellow, text_size=size.small, text_halign=text.align_center)
+
+else
+    if not na(dash)
+        table.delete(dash)
+        dash := na
+
+if mobile_mode and not na(dash)
+    table.delete(dash)
+    dash := na
