@@ -1,11 +1,11 @@
 //@version=6
-indicator("ADX CE & PE Separated V6 + Fib + BEP", overlay=false, precision=2)
+indicator("Alert CE & PE", overlay=false, precision=2)
 
 // ═══════════════════════════════════════════════════════════
 // 1. SYMBOL & GAP INPUTS
 // ═══════════════════════════════════════════════════════════
-ce_sym     = input.symbol("NSE:NIFTY260714C24100", title="Call Option (CE)")
-pe_sym     = input.symbol("NSE:NIFTY260714P24100", title="Put Option (PE)")
+ce_sym     = input.symbol("NSE:NIFTY260728C24200", title="Call Option (CE)")
+pe_sym     = input.symbol("NSE:NIFTY260728P24200", title="Put Option (PE)")
 gap_offset = input.int(0, title="Visual Gap (Offset)", minval=0, step=50,
              tooltip="Increase this to push PE lower on the panel")
 
@@ -691,8 +691,14 @@ if adj_pe_trigger
 grp_trade       = "Trade Signals"
 show_trade      = input.bool(true, title="Show Trade Signals", group=grp_trade)
 enable_alerts   = input.bool(true, title="Enable Alerts",      group=grp_trade)
+one_buy_trade_per_leg_per_day = input.bool(true, title="Limit to One CE/PE Buy Trade Per Day", group=grp_trade,
+                              tooltip="ON: each leg can enter only once per session. OFF: a leg may re-enter after its prior trade exits, subject to all other filters and the forced-exit time.")
 alert_freq_once = input.bool(true, title="Alert Once Per Bar (uncheck = every tick)", group=grp_trade,
                   tooltip="ON: alert fires once when the bar closes. OFF: fires on every realtime tick.")
+use_intrabar_preview_alerts = input.bool(false, title="Use Intrabar Preview Alerts (Buy)", group=grp_trade,
+                      tooltip="When ON, sends intrabar PREVIEW buy alerts on realtime bars. Actual CE/PE buy entry stays close-confirmed.")
+show_intrabar_preview_labels = input.bool(true, title="Show Intrabar Preview Labels", group=grp_trade,
+                      tooltip="When OFF, preview alerts still fire but PREVIEW labels are hidden from the chart.")
 
 // -- Alert type filter for webhook --
 grp_alert_filter = "Alert Filter (Webhook)"
@@ -719,20 +725,40 @@ spot_sym   = input.symbol("NSE:NIFTY", title="Spot Symbol", group=grp_trade)
 // Optional spot-market filters for CE/PE buying. They are OFF by default so
 // existing signal behaviour is preserved until explicitly enabled.
 grp_spot_filter          = "Spot Trend Filters"
-use_spot_dmi_adx         = input.bool(false, title="Use Spot DMI/ADX Filter", group=grp_spot_filter)
-spot_dmi_length          = input.int(14, title="DMI Length", minval=1, group=grp_spot_filter, inline="dmi")
-spot_adx_smoothing        = input.int(14, title="ADX Smoothing", minval=1, group=grp_spot_filter, inline="dmi")
-spot_min_adx             = input.float(20.0, title="Minimum ADX", minval=0.0, step=0.5, group=grp_spot_filter,
-                            tooltip="The DMI/ADX filter allows CE only when +DI exceeds -DI and PE only when -DI exceeds +DI. Both require ADX at or above this value.")
+use_spot_supertrend      = input.bool(false, title="Use Spot Supertrend Filter", group=grp_spot_filter)
+spot_st_atr_length       = input.int(10, title="Supertrend ATR Length", minval=1, group=grp_spot_filter, inline="st")
+spot_st_factor           = input.float(2.0, title="Factor", minval=0.1, step=0.1, group=grp_spot_filter, inline="st")
 use_spot_vwap_direction  = input.bool(false, title="Use Spot VWAP Direction Filter", group=grp_spot_filter)
 spot_vwap_slope_bars     = input.int(1, title="VWAP Slope Lookback Bars", minval=1, group=grp_spot_filter,
                             tooltip="CE needs spot above a rising VWAP; PE needs spot below a falling VWAP.")
+use_spot_adx_filter      = input.bool(false, title="Use Spot ADX Strength Filter", group=grp_spot_filter, inline="adx")
+spot_adx_length          = input.int(14, title="ADX Length", minval=1, group=grp_spot_filter, inline="adx")
+spot_adx_threshold       = input.float(20.0, title="Threshold", minval=1.0, step=0.5, group=grp_spot_filter, inline="adx")
+use_spot_adx_di_filter   = input.bool(false, title="Use +DI/-DI Direction Filter", group=grp_spot_filter,
+                            tooltip="When ON: CE requires +DI > -DI and PE requires -DI > +DI.")
 
 spot_close = request.security(spot_sym, timeframe.period, close)
 spot_high  = request.security(spot_sym, timeframe.period, high)
 spot_low   = request.security(spot_sym, timeframe.period, low)
 spot_vol   = request.security(spot_sym, timeframe.period, volume)
-[spot_di_plus, spot_di_minus, spot_adx] = request.security(spot_sym, timeframe.period, ta.dmi(spot_dmi_length, spot_adx_smoothing))
+[spot_supertrend, spot_supertrend_dir] = request.security(spot_sym, timeframe.period, ta.supertrend(spot_st_factor, spot_st_atr_length))
+// Compute ADX and +DI/-DI from spot OHLC (custom implementation to avoid missing builtin)
+f_dmi_adx(_h, _l, _c, _len) =>
+    float _up   = _h - _h[1]
+    float _down = _l[1] - _l
+    float _plusDM  = (_up > _down and _up > 0) ? _up : 0.0
+    float _minusDM = (_down > _up and _down > 0) ? _down : 0.0
+    float _tr = math.max(_h - _l, math.max(math.abs(_h - _c[1]), math.abs(_l - _c[1])))
+    float _atr = ta.rma(_tr, _len)
+    float _sm_plus  = ta.rma(_plusDM, _len)
+    float _sm_minus = ta.rma(_minusDM, _len)
+    float _plusDI  = _atr > 0 ? 100.0 * _sm_plus  / _atr : 0.0
+    float _minusDI = _atr > 0 ? 100.0 * _sm_minus / _atr : 0.0
+    float _dx = (_plusDI + _minusDI) > 0 ? 100.0 * math.abs(_plusDI - _minusDI) / (_plusDI + _minusDI) : 0.0
+    float _adx = ta.rma(_dx, _len)
+    [_adx, _plusDI, _minusDI]
+
+[spot_adx, spot_di_plus, spot_di_minus] = f_dmi_adx(spot_high, spot_low, spot_close, spot_adx_length)
 
 var float spot_orb_high = na
 var float spot_orb_low  = na
@@ -752,15 +778,20 @@ spot_cum_tpv := spot_cum_tpv + spot_tp * nz(spot_vol)
 spot_cum_vol := spot_cum_vol + nz(spot_vol)
 spot_vwap     = spot_cum_vol > 0 ? spot_cum_tpv / spot_cum_vol : na
 
-// Calculate DMI/ADX in request.security so directional movement and ADX use
+// ta.supertrend() returns a negative direction for an uptrend and a positive
+// direction for a downtrend. Calculate it in request.security so its ATR uses
 // NIFTY spot OHLC, never the chart or option OHLC.
-spot_dmi_bull = not na(spot_di_plus) and not na(spot_di_minus) and not na(spot_adx) and spot_di_plus > spot_di_minus and spot_adx >= spot_min_adx
-spot_dmi_bear = not na(spot_di_plus) and not na(spot_di_minus) and not na(spot_adx) and spot_di_minus > spot_di_plus and spot_adx >= spot_min_adx
+spot_st_bull = not na(spot_supertrend) and spot_supertrend_dir < 0
+spot_st_bear = not na(spot_supertrend) and spot_supertrend_dir > 0
 spot_vwap_up = not na(spot_vwap) and not na(spot_vwap[spot_vwap_slope_bars]) and spot_close > spot_vwap and spot_vwap > spot_vwap[spot_vwap_slope_bars]
 spot_vwap_down = not na(spot_vwap) and not na(spot_vwap[spot_vwap_slope_bars]) and spot_close < spot_vwap and spot_vwap < spot_vwap[spot_vwap_slope_bars]
 
-spot_ce_trend_ok = (not use_spot_dmi_adx or spot_dmi_bull) and (not use_spot_vwap_direction or spot_vwap_up)
-spot_pe_trend_ok = (not use_spot_dmi_adx or spot_dmi_bear) and (not use_spot_vwap_direction or spot_vwap_down)
+spot_adx_strength_ok = not use_spot_adx_filter or (not na(spot_adx) and spot_adx >= spot_adx_threshold)
+spot_ce_di_ok        = not use_spot_adx_di_filter or (not na(spot_di_plus) and not na(spot_di_minus) and spot_di_plus > spot_di_minus)
+spot_pe_di_ok        = not use_spot_adx_di_filter or (not na(spot_di_plus) and not na(spot_di_minus) and spot_di_minus > spot_di_plus)
+
+spot_ce_trend_ok = (not use_spot_supertrend or spot_st_bull) and (not use_spot_vwap_direction or spot_vwap_up) and spot_adx_strength_ok and spot_ce_di_ok
+spot_pe_trend_ok = (not use_spot_supertrend or spot_st_bear) and (not use_spot_vwap_direction or spot_vwap_down) and spot_adx_strength_ok and spot_pe_di_ok
 
 // ═══════════════════════════════════════════════════════════
 // 8F. SIGNAL LOGIC (BUY side)
@@ -830,7 +861,7 @@ if is_new_session
 
 // Block BUY CE if SELL CE is already active (cannot be long and short same leg)
 // NEW: buy_time_ok = bar must CLOSE at/after 9:30 (first eligible trigger 9:30)
-ce_signal_trigger = barstate.isconfirmed and long_ce and not in_ce_trade and not ce_trade_done and buy_entry_time_ok and not na(session_half_range) and not na(ce_c) and ce_c > 0 and not os_ce_active
+ce_signal_trigger = barstate.isconfirmed and long_ce and not in_ce_trade and (not one_buy_trade_per_leg_per_day or not ce_trade_done) and buy_entry_time_ok and not na(session_half_range) and not na(ce_c) and ce_c > 0 and not os_ce_active
 if ce_signal_trigger
     in_ce_trade     := true
     ce_trade_done   := true
@@ -890,7 +921,7 @@ if is_new_session
 
 // Block BUY PE if SELL PE is already active (cannot be long and short same leg)
 // NEW: buy_time_ok = bar must CLOSE at/after 9:30 (first eligible trigger 9:30)
-pe_signal_trigger = barstate.isconfirmed and long_pe and not in_pe_trade and not pe_trade_done and buy_entry_time_ok and not na(session_half_range) and not na(pe_c) and pe_c > 0 and not os_pe_active
+pe_signal_trigger = barstate.isconfirmed and long_pe and not in_pe_trade and (not one_buy_trade_per_leg_per_day or not pe_trade_done) and buy_entry_time_ok and not na(session_half_range) and not na(pe_c) and pe_c > 0 and not os_pe_active
 if pe_signal_trigger
     in_pe_trade     := true
     pe_trade_done   := true
@@ -1003,6 +1034,22 @@ if show_trade
              style=label.style_label_down, color=color.new(color.gray, 0),
              textcolor=color.white, size=size.small)
 
+    // -- Intrabar preview labels (entries remain close-confirmed) --
+    ce_preview_trigger = use_intrabar_preview_alerts and show_intrabar_preview_labels and barstate.isrealtime and not barstate.isconfirmed and long_ce and not in_ce_trade and (not one_buy_trade_per_leg_per_day or not ce_trade_done) and buy_entry_time_ok and not na(session_half_range) and not na(ce_c) and ce_c > 0 and not os_ce_active
+    pe_preview_trigger = use_intrabar_preview_alerts and show_intrabar_preview_labels and barstate.isrealtime and not barstate.isconfirmed and long_pe and not in_pe_trade and (not one_buy_trade_per_leg_per_day or not pe_trade_done) and buy_entry_time_ok and not na(session_half_range) and not na(pe_c) and pe_c > 0 and not os_pe_active
+
+    if ce_preview_trigger
+        label.new(bar_index, ce_l,
+             "PREVIEW BUY CE\n(wait close confirm)\nPrem:" + str.tostring(ce_c, "#.0"),
+             style=label.style_label_up, color=color.new(color.green, 65),
+             textcolor=color.white, size=size.tiny)
+
+    if pe_preview_trigger
+        label.new(bar_index, pe_l_adj,
+             "PREVIEW BUY PE\n(wait close confirm)\nPrem:" + str.tostring(pe_c, "#.0"),
+             style=label.style_label_up, color=color.new(color.red, 65),
+             textcolor=color.white, size=size.tiny)
+
     if straddle_sl_hit
         label.new(bar_index, straddle_close,
              "STRADDLE SL\nVal:" + str.tostring(straddle_close, "#.0") + " | P&L:" + str.tostring(straddle_pnl_pct, "#.0") + "%",
@@ -1060,6 +1107,20 @@ if show_trade
 // 8I. ALERTS (with Buy/Sell filter)
 // ═══════════════════════════════════════════════════════════
 if enable_alerts
+    ce_preview_trigger_alert = use_intrabar_preview_alerts and barstate.isrealtime and not barstate.isconfirmed and long_ce and not in_ce_trade and (not one_buy_trade_per_leg_per_day or not ce_trade_done) and buy_entry_time_ok and not na(session_half_range) and not na(ce_c) and ce_c > 0 and not os_ce_active
+    pe_preview_trigger_alert = use_intrabar_preview_alerts and barstate.isrealtime and not barstate.isconfirmed and long_pe and not in_pe_trade and (not one_buy_trade_per_leg_per_day or not pe_trade_done) and buy_entry_time_ok and not na(session_half_range) and not na(pe_c) and pe_c > 0 and not os_pe_active
+
+    var int ce_preview_last_bar = na
+    var int pe_preview_last_bar = na
+
+    if _allow_buy and ce_preview_trigger_alert and (na(ce_preview_last_bar) or ce_preview_last_bar != bar_index)
+        alert("PREVIEW BUY CE (Intrabar) | Prem: " + str.tostring(ce_c, "#.0") + " | Waiting for bar close confirmation", alert.freq_once_per_bar)
+        ce_preview_last_bar := bar_index
+
+    if _allow_buy and pe_preview_trigger_alert and (na(pe_preview_last_bar) or pe_preview_last_bar != bar_index)
+        alert("PREVIEW BUY PE (Intrabar) | Prem: " + str.tostring(pe_c, "#.0") + " | Waiting for bar close confirmation", alert.freq_once_per_bar)
+        pe_preview_last_bar := bar_index
+
     // -- BUY CE alerts --
     if _allow_buy and ce_signal_trigger
         alert("BUY CE | Prem: " + str.tostring(ce_entry_snap, "#.0") + " | T1: " + str.tostring(ce_t1_snap, "#.0") + " | T2: " + str.tostring(ce_t2_snap, "#.0") + " | SL: " + str.tostring(ce_sl_snap, "#.0") + " | HR: " + str.tostring(ce_hr_snap, "#.0") + "pts", _alert_freq)
