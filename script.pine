@@ -1,11 +1,11 @@
 //@version=6
-indicator("CE & PE Separated V6 + Fib + BEP + Dashboard  [Best on 5m]", overlay=false, precision=2)
+indicator("Base Script:Option Display", overlay=false, precision=2)
 
 // ═══════════════════════════════════════════════════════════
 // 1. SYMBOL & GAP INPUTS
 // ═══════════════════════════════════════════════════════════
-ce_sym     = input.symbol("NSE:NIFTY260714C24100", title="Call Option (CE)")
-pe_sym     = input.symbol("NSE:NIFTY260714P24100", title="Put Option (PE)")
+ce_sym     = input.symbol("NSE:NIFTY260728C24200", title="Call Option (CE)")
+pe_sym     = input.symbol("NSE:NIFTY260728P24200", title="Put Option (PE)")
 gap_offset = input.int(0, title="Visual Gap (Offset)", minval=0, step=50,
              tooltip="Increase this to push PE lower on the panel")
 
@@ -58,6 +58,11 @@ show_tval_pe = input.bool(true, title="Show PE TV Levels", group=grp_hr)
 show_hist    = input.bool(true,  title="Show Historical Lines", group=grp_hr,
                tooltip="Draws POC, CE HR, PE HR, and all TV lines for past N sessions as faded reference levels.")
 n_hist       = input.int(3, title="Historical Sessions (N)", group=grp_hr, minval=1, maxval=10)
+hist_alpha_base = input.int(20, title="Historical Line Min Opacity (0=solid ... 90=very faint)", group=grp_hr, minval=0, maxval=90,
+                 tooltip="This is the transparency of the MOST RECENT historical session's lines. Lower = more visible/solid.")
+hist_alpha_step = input.int(10, title="Historical Line Fade Step per Older Session", group=grp_hr, minval=0, maxval=30,
+                 tooltip="Each session further back in history gets this much MORE transparent, up to a cap of 90.")
+hist_line_width = input.int(2, title="Historical POC/HR/TV Line Width", group=grp_hr, minval=1, maxval=4)
 col_tval_ce1 = input.color(color.new(#00FFCC, 60), title="CE TV1", group=grp_hr, inline="tval_ce")
 col_tval_ce2 = input.color(color.new(#00FFCC, 40), title="TV2",    group=grp_hr, inline="tval_ce")
 col_tval_ce3 = input.color(color.new(#00FFCC, 20), title="TV3",    group=grp_hr, inline="tval_ce")
@@ -677,6 +682,8 @@ if adj_pe_trigger
 grp_trade       = "Trade Signals"
 show_trade      = input.bool(true, title="Show Trade Signals", group=grp_trade)
 enable_alerts   = input.bool(true, title="Enable Alerts",      group=grp_trade)
+one_buy_trade_per_leg_per_day = input.bool(true, title="Limit to One CE/PE Buy Trade Per Day", group=grp_trade,
+                              tooltip="ON: each leg can enter only once per session. OFF: a leg may re-enter after its prior trade exits, subject to all other filters and the forced-exit time.")
 alert_freq_once = input.bool(true, title="Alert Once Per Bar (uncheck = every tick)", group=grp_trade,
                   tooltip="ON: alert fires once when the bar closes. OFF: fires on every realtime tick.")
 
@@ -785,7 +792,7 @@ if is_new_session
 
 // Block BUY CE if SELL CE is already active (cannot be long and short same leg)
 // NEW: buy_time_ok = bar must CLOSE at/after 9:30 (first eligible trigger 9:30)
-ce_signal_trigger = barstate.isconfirmed and long_ce and not in_ce_trade and not ce_trade_done and buy_time_ok and not na(session_half_range) and not na(ce_c) and ce_c > 0 and not os_ce_active
+ce_signal_trigger = barstate.isconfirmed and long_ce and not in_ce_trade and (not one_buy_trade_per_leg_per_day or not ce_trade_done) and buy_time_ok and not na(session_half_range) and not na(ce_c) and ce_c > 0 and not os_ce_active
 if ce_signal_trigger
     float ce_entry_rnd = f_round10(ce_c)   // round-number entry: 163 -> 160, 167 -> 170
     in_ce_trade     := true
@@ -795,11 +802,11 @@ if ce_signal_trigger
     ce_target1_prem := ce_entry_rnd + session_half_range / 2.0
     ce_target2_prem := ce_entry_rnd + session_half_range
     ce_t1_done      := false
-    ce_sl_prem_lvl  := ce_entry_rnd - session_half_range
+    ce_sl_prem_lvl  := ce_entry_rnd - (session_half_range * 0.75)
     ce_entry_snap   := ce_entry_rnd
     ce_t1_snap      := ce_entry_rnd + session_half_range / 2.0
     ce_t2_snap      := ce_entry_rnd + session_half_range
-    ce_sl_snap      := ce_entry_rnd - session_half_range
+    ce_sl_snap      := ce_entry_rnd - (session_half_range * 0.75)
     ce_hr_snap      := session_half_range
 
 ce_t1_hit = in_ce_trade and not ce_t1_done and not na(ce_target1_prem) and ce_h >= ce_target1_prem
@@ -807,7 +814,11 @@ if ce_t1_hit
     ce_t1_done := true
 
 ce_t2_hit    = in_ce_trade and not na(ce_target2_prem) and ce_h >= ce_target2_prem
-ce_sl_hit    = barstate.isconfirmed and in_ce_trade and not na(ce_sl_prem_lvl) and ce_l <= ce_sl_prem_lvl
+// FIX: removed barstate.isconfirmed gate so CE SL evaluates on every tick,
+// same as ce_t1_hit / ce_t2_hit above. Previously SL only checked on bar
+// close while targets checked on every tick — that asymmetry meant an
+// intrabar SL wick could go unflagged until (sometimes well after) close.
+ce_sl_hit    = in_ce_trade and not na(ce_sl_prem_lvl) and ce_l <= ce_sl_prem_lvl
 ce_time_exit = in_ce_trade and trade_is_force_exit_time
 ce_exit      = ce_t2_hit or ce_sl_hit or ce_time_exit
 
@@ -843,7 +854,7 @@ if is_new_session
 
 // Block BUY PE if SELL PE is already active (cannot be long and short same leg)
 // NEW: buy_time_ok = bar must CLOSE at/after 9:30 (first eligible trigger 9:30)
-pe_signal_trigger = barstate.isconfirmed and long_pe and not in_pe_trade and not pe_trade_done and buy_time_ok and not na(session_half_range) and not na(pe_c) and pe_c > 0 and not os_pe_active
+pe_signal_trigger = barstate.isconfirmed and long_pe and not in_pe_trade and (not one_buy_trade_per_leg_per_day or not pe_trade_done) and buy_time_ok and not na(session_half_range) and not na(pe_c) and pe_c > 0 and not os_pe_active
 if pe_signal_trigger
     float pe_entry_rnd = f_round10(pe_c)   // round-number entry: 163 -> 160, 167 -> 170
     in_pe_trade     := true
@@ -853,11 +864,11 @@ if pe_signal_trigger
     pe_target1_prem := pe_entry_rnd + session_half_range / 2.0
     pe_target2_prem := pe_entry_rnd + session_half_range
     pe_t1_done      := false
-    pe_sl_prem_lvl  := pe_entry_rnd - session_half_range
+    pe_sl_prem_lvl  := pe_entry_rnd - (session_half_range * 0.75)
     pe_entry_snap   := pe_entry_rnd
     pe_t1_snap      := pe_entry_rnd + session_half_range / 2.0
     pe_t2_snap      := pe_entry_rnd + session_half_range
-    pe_sl_snap      := pe_entry_rnd - session_half_range
+    pe_sl_snap      := pe_entry_rnd - (session_half_range * 0.75)
     pe_hr_snap      := session_half_range
 
 pe_t1_hit = in_pe_trade and not pe_t1_done and not na(pe_target1_prem) and pe_h >= pe_target1_prem
@@ -1225,37 +1236,37 @@ if barstate.islast
             float _tp4 = array.get(hist_tpe4,  i)
             float _tp5 = array.get(hist_tpe5,  i)
 
-            int _alpha = 60 + ((_n - 1 - i) * 15)
+            int _alpha = hist_alpha_base + ((_n - 1 - i) * hist_alpha_step)
             _alpha := math.min(_alpha, 90)
 
             if show_fib and not na(_poc)
-                line.new(_sb, _poc, _eb, _poc, color=color.new(col_fib_poc, _alpha), width=1, style=line.style_dashed)
+                line.new(_sb, _poc, _eb, _poc, color=color.new(col_fib_poc, _alpha), width=hist_line_width, style=line.style_dashed)
             if show_hr and not na(_hce)
-                line.new(_sb, _hce, _eb, _hce, color=color.new(col_hr_upper, _alpha), width=1, style=line.style_dashed)
+                line.new(_sb, _hce, _eb, _hce, color=color.new(col_hr_upper, _alpha), width=hist_line_width, style=line.style_dashed)
             if show_hr and not na(_hpe)
-                line.new(_sb, _hpe, _eb, _hpe, color=color.new(col_hr_lower, _alpha), width=1, style=line.style_dashed)
+                line.new(_sb, _hpe, _eb, _hpe, color=color.new(col_hr_lower, _alpha), width=hist_line_width, style=line.style_dashed)
             if show_tval and show_tval_ce
                 if not na(_tc1)
-                    line.new(_sb, _tc1, _eb, _tc1, color=color.new(col_tval_ce1, _alpha), width=1, style=line.style_dotted)
+                    line.new(_sb, _tc1, _eb, _tc1, color=color.new(col_tval_ce1, _alpha), width=hist_line_width, style=line.style_dashed)
                 if not na(_tc2)
-                    line.new(_sb, _tc2, _eb, _tc2, color=color.new(col_tval_ce2, _alpha), width=1, style=line.style_dotted)
+                    line.new(_sb, _tc2, _eb, _tc2, color=color.new(col_tval_ce2, _alpha), width=hist_line_width, style=line.style_dashed)
                 if not na(_tc3)
-                    line.new(_sb, _tc3, _eb, _tc3, color=color.new(col_tval_ce3, _alpha), width=1, style=line.style_dotted)
+                    line.new(_sb, _tc3, _eb, _tc3, color=color.new(col_tval_ce3, _alpha), width=hist_line_width, style=line.style_dashed)
                 if not na(_tc4)
-                    line.new(_sb, _tc4, _eb, _tc4, color=color.new(col_tval_ce4, _alpha), width=1, style=line.style_dotted)
+                    line.new(_sb, _tc4, _eb, _tc4, color=color.new(col_tval_ce4, _alpha), width=hist_line_width, style=line.style_dashed)
                 if not na(_tc5)
-                    line.new(_sb, _tc5, _eb, _tc5, color=color.new(col_tval_ce5, _alpha), width=1, style=line.style_dotted)
+                    line.new(_sb, _tc5, _eb, _tc5, color=color.new(col_tval_ce5, _alpha), width=hist_line_width, style=line.style_dashed)
             if show_tval and show_tval_pe
                 if not na(_tp1)
-                    line.new(_sb, _tp1, _eb, _tp1, color=color.new(col_tval_pe1, _alpha), width=1, style=line.style_dotted)
+                    line.new(_sb, _tp1, _eb, _tp1, color=color.new(col_tval_pe1, _alpha), width=hist_line_width, style=line.style_dashed)
                 if not na(_tp2)
-                    line.new(_sb, _tp2, _eb, _tp2, color=color.new(col_tval_pe2, _alpha), width=1, style=line.style_dotted)
+                    line.new(_sb, _tp2, _eb, _tp2, color=color.new(col_tval_pe2, _alpha), width=hist_line_width, style=line.style_dashed)
                 if not na(_tp3)
-                    line.new(_sb, _tp3, _eb, _tp3, color=color.new(col_tval_pe3, _alpha), width=1, style=line.style_dotted)
+                    line.new(_sb, _tp3, _eb, _tp3, color=color.new(col_tval_pe3, _alpha), width=hist_line_width, style=line.style_dashed)
                 if not na(_tp4)
-                    line.new(_sb, _tp4, _eb, _tp4, color=color.new(col_tval_pe4, _alpha), width=1, style=line.style_dotted)
+                    line.new(_sb, _tp4, _eb, _tp4, color=color.new(col_tval_pe4, _alpha), width=hist_line_width, style=line.style_dashed)
                 if not na(_tp5)
-                    line.new(_sb, _tp5, _eb, _tp5, color=color.new(col_tval_pe5, _alpha), width=1, style=line.style_dotted)
+                    line.new(_sb, _tp5, _eb, _tp5, color=color.new(col_tval_pe5, _alpha), width=hist_line_width, style=line.style_dashed)
 
 // -- BEP label --
 var label lb_bep = na
